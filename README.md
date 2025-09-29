@@ -15,9 +15,9 @@ It allows users to report sightings, upload images, and track stray animals whil
 - Photo handling, geolocation, filtering, search  
 
 ---
-
 ## 📁 Project Structure
 
+```plaintext
 StrayScan/
 ├── manage.py
 ├── strayscan/ # Main Django project folder
@@ -25,7 +25,13 @@ StrayScan/
 │ ├── urls.py
 │ ├── wsgi.py
 │ └── asgi.py
-├── app_name/ # Example Django apps (reports, users, etc.)
+├── users/ # Example app: user management
+│ ├── models.py
+│ ├── views.py
+│ ├── urls.py
+│ ├── templates/
+│ └── static/
+├── reports/ # Example app: stray reports
 │ ├── models.py
 │ ├── views.py
 │ ├── urls.py
@@ -36,6 +42,7 @@ StrayScan/
 ├── templates/ # Shared HTML templates
 ├── requirements.txt
 └── README.md
+```
 ---
 
 ## 🔧 Requirements & Setup
