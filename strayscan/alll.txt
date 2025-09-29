@@ -1,0 +1,2581 @@
+models.py
+from django.contrib import admin
+from .models import PetLog
+
+admin.site.register(PetLog)
+
+
+
+urls.py
+from django.urls import path
+from . import views
+
+urlpatterns = [
+    path('report/', views.report_pet, name='report_pet'),
+    path('lost/', views.get_lost_pets, name='lost_pets'),
+    path('found/', views.get_found_pets, name='found_pets'),
+    path('pet/<int:pk>/edit/', views.edit_pet, name='edit_pet'),  
+    path('pet/<int:pk>/delete/', views.delete_pet, name='delete_pet'),  
+    path('pet/<int:pk>/mark_found/', views.mark_as_found, name='mark_as_found'),
+    path('lost/delete_all/', views.delete_all_pets_by_status, name='delete_all_lost_pets'),  
+    path('found/delete_all/', views.delete_all_pets_by_status, name='delete_all_found_pets'), 
+]
+
+
+views.py
+from django.shortcuts import render
+from django.http import JsonResponse
+from django.views.decorators.csrf import csrf_exempt
+from django.views.decorators.http import require_http_methods
+from django.utils.dateparse import parse_date
+from django.shortcuts import get_object_or_404
+import json
+
+from .models import PetLog
+
+def index(request):
+    return render(request, 'index.html')
+
+@csrf_exempt
+@require_http_methods(["POST"])
+def report_pet(request):
+    data = json.loads(request.body)
+    try:
+        pet = PetLog.objects.create(
+            pet_name=data.get('pet_name'),
+            pet_type=data['pet_type'],
+            description=data['description'],
+            status=data['status'],
+            location=data['location'],
+            date=parse_date(data['date']),
+            contact_info=data['contact_info']
+        )
+        return JsonResponse({'message': 'Pet reported successfully', 'id': pet.id}, status=201)
+    except KeyError as e:
+        return JsonResponse({'error': f'Missing field: {e}'}, status=400)
+
+def get_lost_pets(request):
+    lost_pets = list(PetLog.objects.filter(status='lost').values())
+    return JsonResponse({'lost_pets': lost_pets})
+
+
+def get_found_pets(request):
+    found_pets = list(PetLog.objects.filter(status='found').values())
+    return JsonResponse({'found_pets': found_pets})
+
+@csrf_exempt
+@require_http_methods(["PUT"])
+def edit_pet(request, pk): 
+    pet = get_object_or_404(PetLog, id=pk)
+    data = json.loads(request.body)
+    for field in ['pet_name', 'pet_type', 'description', 'status', 'location', 'contact_info']:
+        if field in data:
+            setattr(pet, field, data[field])
+    if 'date' in data:
+        pet.date = parse_date(data['date'])
+    pet.save()
+    return JsonResponse({'message': 'Pet log updated successfully'})
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def delete_pet(request, pk): 
+    pet = get_object_or_404(PetLog, id=pk)
+    pet.delete()
+    return JsonResponse({'message': 'Pet log deleted'})
+
+@csrf_exempt
+def mark_as_found(request, pk):
+    if request.method == 'POST':
+        try:
+            pet = PetLog.objects.get(pk=pk, status='lost')
+            pet.status = 'found'
+            pet.save()
+            return JsonResponse({'message': 'Pet marked as found successfully.'})
+        except PetLog.DoesNotExist:
+            return JsonResponse({'error': 'Lost pet not found.'}, status=404)
+    return JsonResponse({'error': 'Invalid request method.'}, status=400)
+
+
+@csrf_exempt
+@require_http_methods(["DELETE"])
+def delete_all_pets_by_status(request, status):
+    if status not in ['lost', 'found']:
+        return JsonResponse({'error': 'Invalid status'}, status=400)
+    PetLog.objects.filter(status=status).delete()
+    return JsonResponse({'message': f'All {status} pet logs deleted'})
+
+
+
+urls.py
+"""
+URL configuration for strayscan project.
+
+The `urlpatterns` list routes URLs to views. For more information please see:
+    https://docs.djangoproject.com/en/5.1/topics/http/urls/
+Examples:
+Function views
+    1. Add an import:  from my_app import views
+    2. Add a URL to urlpatterns:  path('', views.home, name='home')
+Class-based views
+    1. Add an import:  from other_app.views import Home
+    2. Add a URL to urlpatterns:  path('', Home.as_view(), name='home')
+Including another URLconf
+    1. Import the include() function: from django.urls import include, path
+    2. Add a URL to urlpatterns:  path('blog/', include('blog.urls'))
+"""
+from django.contrib import admin
+from django.urls import path, include
+from pets.views import index
+
+urlpatterns = [
+    path('admin/', admin.site.urls),
+    path('api/', include('pets.urls')),
+    path('', index),
+]
+
+
+index.html
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    
+    <link rel="icon" type="image/png" href="{% static 'img/favicon.png' %}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StrayScan</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="logo-container">
+                <i class="fas fa-paw logo-icon"></i>
+                <h1>StrayScan</h1>
+            </div>
+            <p class="tagline">Helping lost pets find their way home</p>
+
+            <nav>
+                <button class="nav-btn active" onclick="switchTab('dashboard')">
+                    <i class="fas fa-home"></i> Dashboard
+                </button>
+                <button class="nav-btn" onclick="switchTab('lost')">
+                    <i class="fas fa-search"></i> Lost Pets
+                </button>
+                <button class="nav-btn" onclick="switchTab('found')">
+                    <i class="fas fa-check-circle"></i> Found Pets
+                </button>
+                <button class="report-btn" onclick="openReportModal()">
+                    <i class="fas fa-plus-circle"></i> Report Pet
+                </button>
+            </nav>
+        </header>
+
+        <main>
+            <section id="dashboard" class="tab">
+                <div class="section-header">
+                    <h2><i class="fas fa-chart-line"></i> Dashboard</h2>
+                    <button onclick="openModal('dashboardInfoModal')" class="info-btn" title="Dashboard Information">
+                        <i class="fas fa-info-circle"></i>
+                    </button>
+                </div>
+
+                <div class="stats-container">
+                    <div class="stat-card" id="total-lost">
+                        <i class="fas fa-exclamation-triangle stat-icon"></i>
+                        <div class="stat-details">
+                            <h3>Lost Pets</h3>
+                            <p class="stat-count">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="total-found">
+                        <i class="fas fa-check-circle stat-icon"></i>
+                        <div class="stat-details">
+                            <h3>Found Pets</h3>
+                            <p class="stat-count">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="recent-activity">
+                        <i class="fas fa-clock stat-icon"></i>
+                        <div class="stat-details">
+                            <h3>Recent Activity</h3>
+                            <p class="stat-count" id="recent-count">0</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="dashboard-lists"> 
+                    <div class="list-section">
+                        <h3><i class="fas fa-search"></i> Recently Lost Pets</h3>
+                        <div id="dashboard-lost" class="dashboard-pet-list"></div>
+                        <button class="view-all-btn" onclick="switchTab('lost')">View All Lost Pets</button>
+                    </div>
+                    <div class="list-section">
+                        <h3><i class="fas fa-check-circle"></i> Recently Found Pets</h3>
+                        <div id="dashboard-found" class="dashboard-pet-list"></div>
+                        <button class="view-all-btn" onclick="switchTab('found')">View All Found Pets</button>
+                    </div>
+                </div> 
+                
+                <div class="charts">
+                    <div class="chart-section">
+                        <h3><i class="fas fa-chart-pie"></i> Lost Pets By Type</h3>
+                        <canvas id="lostChart"></canvas>
+                    </div>
+                    <div class="chart-section">
+                        <h3><i class="fas fa-chart-pie"></i> Found Pets By Type</h3>
+                        <canvas id="foundChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <section id="lost" class="tab" style="display: none;">
+                <div class="section-header">
+                    <h2><i class="fas fa-search"></i> Lost Pets</h2>
+                    <div class="section-controls">
+                        <input type="text" id="lost-search" placeholder="Search lost pets..." class="search-input">
+                        <button onclick="openModal('lostInfoModal')" class="info-btn" title="Lost Pets Information">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <button class="delete-all-btn" onclick="confirmDeleteAll('lost')">
+                            <i class="fas fa-trash-alt"></i> Delete All
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-controls">
+                    <div class="filter-group">
+                        <label for="lost-type-filter">Filter by Type:</label>
+                        <select id="lost-type-filter" onchange="applyLostFilters()">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="lost-sort">Sort by:</label>
+                        <select id="lost-sort" onchange="applyLostFilters()">
+                            <option value="date-desc">Date (Newest First)</option>
+                            <option value="date-asc">Date (Oldest First)</option>
+                            <option value="name">Name</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pet-list-container">
+                    <div id="lost-list" class="pet-list"></div>
+                    <div id="lost-empty-state" class="empty-state" style="display: none;">
+                        <i class="fas fa-search empty-icon"></i>
+                        <p>No lost pets found</p>
+                        <button class="cta-btn" onclick="openReportModal()">Report a Lost Pet</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="found" class="tab" style="display: none;">
+                <div class="section-header">
+                    <h2><i class="fas fa-check-circle"></i> Found Pets</h2>
+                    <div class="section-controls">
+                        <input type="text" id="found-search" placeholder="Search found pets..." class="search-input">
+                        <button onclick="openModal('foundInfoModal')" class="info-btn" title="Found Pets Information">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <button class="delete-all-btn" onclick="confirmDeleteAll('found')">
+                            <i class="fas fa-trash-alt"></i> Delete All
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-controls">
+                    <div class="filter-group">
+                        <label for="found-type-filter">Filter by Type:</label>
+                        <select id="found-type-filter" onchange="applyFoundFilters()">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="found-sort">Sort by:</label>
+                        <select id="found-sort" onchange="applyFoundFilters()">
+                            <option value="date-desc">Date (Newest First)</option>
+                            <option value="date-asc">Date (Oldest First)</option>
+                            <option value="name">Name</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pet-list-container">
+                    <div id="found-list" class="pet-list"></div>
+                    <div id="found-empty-state" class="empty-state" style="display: none;">
+                        <i class="fas fa-check-circle empty-icon"></i>
+                        <p>No found pets reported</p>
+                        <button class="cta-btn" onclick="openReportModal()">Report a Found Pet</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+        
+        <footer>
+            <p>&copy; 2025 StrayScan - Helping reunite pets with their owners</p>
+        </footer>
+    </div>
+
+    <!-- Report Modal -->
+    <div id="reportModal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('reportModal')">&times;</span>
+            <h3><i class="fas fa-plus-circle"></i> Report a Pet</h3>
+            <form id="reportForm">
+                <div class="form-group">
+                    <label for="pet_name">Pet Name (optional)</label>
+                    <input type="text" id="pet_name" name="pet_name" placeholder="Pet's name (if known)">
+                </div>
+                <div class="form-group">
+                    <label for="pet_type">Pet Type</label>
+                    <input type="text" id="pet_type" name="pet_type" placeholder="Dog, Cat, Bird, etc." required>
+                </div>
+                <div class="form-group">
+                    <label for="description">Description</label>
+                    <textarea id="description" name="description" placeholder="Color, breed, size, distinctive features..." required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="status">Status</label>
+                    <select id="status" name="status" required>
+                        <option value="lost">Lost</option>
+                        <option value="found">Found</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="location">Location</label>
+                    <input type="text" id="location" name="location" placeholder="Where the pet was lost/found" required>
+                </div>
+                <div class="form-group">
+                    <label for="date">Date</label>
+                    <input type="date" id="date" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="contact_info">Contact Information</label>
+                    <input type="text" id="contact_info" name="contact_info" placeholder="Phone number or email" required>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="submit-btn">Submit Report</button>
+                    <button type="button" class="cancel-btn" onclick="closeModal('reportModal')">Cancel</button>
+                </div>
+            </form>
+            <div id="formMessage" class="form-message"></div>
+        </div>
+    </div>
+
+    <!-- Pet Details Modal -->
+    <div id="petModal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('petModal')">&times;</span>
+            <div class="pet-modal-header">
+                <h3 id="modalTitle">Pet Details</h3>
+                <span id="modalStatusBadge" class="status-badge"></span>
+            </div>
+            <div class="pet-details">
+                <div class="detail-group">
+                    <i class="fas fa-paw detail-icon"></i>
+                    <div>
+                        <h4>Type</h4>
+                        <p id="modalType"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-align-left detail-icon"></i>
+                    <div>
+                        <h4>Description</h4>
+                        <p id="modalDescription"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-map-marker-alt detail-icon"></i>
+                    <div>
+                        <h4>Location</h4>
+                        <p id="modalLocation"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-calendar-alt detail-icon"></i>
+                    <div>
+                        <h4>Date</h4>
+                        <p id="modalDate"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-address-card detail-icon"></i>
+                    <div>
+                        <h4>Contact</h4>
+                        <p id="modalContact"></p>
+                    </div>
+                </div>
+            </div>
+            <div id="modalActions" class="modal-actions"></div>
+        </div>
+    </div>
+
+    <!-- Confirmation Modal -->
+    <div id="confirmModal" class="modal hidden">
+        <div class="modal-content confirmation-modal">
+            <h3><i class="fas fa-exclamation-triangle"></i> Confirmation</h3>
+            <p id="confirmMessage"></p>
+            <div class="confirm-actions">
+                <button id="confirmYes" class="danger-btn">Yes, Delete</button>
+                <button id="confirmNo" class="cancel-btn" onclick="closeModal('confirmModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Dashboard Info Modal -->
+    <div id="dashboardInfoModal" class="modal hidden">
+        <div class="modal-content info-modal">
+            <span class="close-btn" onclick="closeModal('dashboardInfoModal')">&times;</span>
+            <h3><i class="fas fa-info-circle"></i> Dashboard Information</h3>
+            <div class="info-content">
+                <p>The Dashboard provides an overview of all reported lost and found pets. Here you can see:</p>
+                <ul>
+                    <li>Total counts of lost and found pets</li>
+                    <li>Recent activity summary</li>
+                    <li>List of recently reported pets</li>
+                    <li>Charts showing the distribution of pet types</li>
+                </ul>
+                <p>Use the navigation buttons to view detailed lists or report a new pet.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Lost Info Modal -->
+    <div id="lostInfoModal" class="modal hidden">
+        <div class="modal-content info-modal">
+            <span class="close-btn" onclick="closeModal('lostInfoModal')">&times;</span>
+            <h3><i class="fas fa-info-circle"></i> Lost Pets Information</h3>
+            <div class="info-content">
+                <p>This section shows all reported lost pets. You can:</p>
+                <ul>
+                    <li>Search for specific pets using the search bar</li>
+                    <li>Filter pets by type</li>
+                    <li>Sort the list by date or name</li>
+                    <li>Click on a pet card to see more details</li>
+                    <li>Mark a pet as found when it's been reunited with its owner</li>
+                </ul>
+                <p>If you've lost your pet, you can report it by clicking the "Report Pet" button.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="editModal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Edit Pet</h2>
+            <span class="close-modal" onclick="closeModal('editModal')">&times;</span>
+          </div>
+          
+          <form id="editForm">
+            <input type="hidden" id="edit-pet-id" name="id">
+            
+            <div class="form-group">
+              <label for="edit-status">Status</label>
+              <select id="edit-status" name="status" required>
+                <option value="lost">Lost</option>
+                <option value="found">Found</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-pet-name">Pet Name (if known)</label>
+              <input type="text" id="edit-pet-name" name="pet_name" placeholder="Pet's name if known">
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-pet-type">Pet Type</label>
+              <input type="text" id="edit-pet-type" name="pet_type" required placeholder="e.g. Dog, Cat, Bird">
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-date">Date</label>
+              <input type="date" id="edit-date" name="date" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-location">Location</label>
+              <input type="text" id="edit-location" name="location" required placeholder="Area where pet was lost/found">
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-description">Description</label>
+              <textarea id="edit-description" name="description" required rows="4" 
+                        placeholder="Color, breed, size, distinguishing features, etc."></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-contact-info">Contact Information</label>
+              <input type="text" id="edit-contact-info" name="contact_info" required placeholder="Phone number or email">
+            </div>
+            
+            <div id="editFormMessage" class="form-message"></div>
+            
+            <div class="form-actions">
+              <button type="button" class="cancel-btn" onclick="closeModal('editModal')">Cancel</button>
+              <button type="submit" class="submit-btn">Update Pet</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+    <!-- Found Info Modal -->
+    <div id="foundInfoModal" class="modal hidden">
+        <div class="modal-content info-modal">
+            <span class="close-btn" onclick="closeModal('foundInfoModal')">&times;</span>
+            <h3><i class="fas fa-info-circle"></i> Found Pets Information</h3>
+            <div class="info-content">
+                <p>This section shows all reported found pets. You can:</p>
+                <ul>
+                    <li>Search for specific pets using the search bar</li>
+                    <li>Filter pets by type</li>
+                    <li>Sort the list by date or name</li>
+                    <li>Click on a pet card to see more details</li>
+                </ul>
+                <p>If you've found a stray pet, you can report it by clicking the "Report Pet" button.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="{% static 'js/app.js' %}"></script>
+</body>
+</html>
+
+
+app.js
+
+let lostPets = [];
+let foundPets = [];
+let allPetTypes = new Set();
+
+function getCsrfToken() {
+  const name = 'csrftoken';
+  let cookieValue = null;
+  if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+          const cookie = cookies[i].trim();
+          if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+          }
+      }
+  }
+  return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date').value = today;
+  
+  
+  switchTab('dashboard');
+  
+  
+  document.getElementById('reportForm').addEventListener('submit', handleReportFormSubmit);
+  document.getElementById('editForm').addEventListener('submit', handleEditFormSubmit);  
+  document.getElementById('lost-search').addEventListener('input', applyLostFilters);
+  document.getElementById('found-search').addEventListener('input', applyFoundFilters);
+});
+
+
+function switchTab(tabName) {
+  
+  document.querySelectorAll('.tab').forEach(tab => tab.style.display = 'none');
+  document.getElementById(tabName).style.display = 'block';
+  
+  
+  document.querySelectorAll('nav button').forEach(btn => btn.classList.remove('active'));
+  document.querySelector(`button[onclick="switchTab('${tabName}')"]`).classList.add('active');
+  
+  
+  if (tabName === 'dashboard') {
+    loadDashboard();
+  } else if (tabName === 'lost') {
+    loadLostPets();
+  } else if (tabName === 'found') {
+    loadFoundPets();
+  }
+}
+
+
+function openModal(modalId) {
+  document.getElementById(modalId).classList.remove('hidden');
+}
+
+function closeModal(modalId) {
+  document.getElementById(modalId).classList.add('hidden');
+}
+
+function openReportModal() {
+  
+  document.getElementById('reportForm').reset();
+  
+  
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date').value = today;
+  
+  
+  document.getElementById('formMessage').textContent = '';
+  document.getElementById('formMessage').className = 'form-message';
+  
+  
+  openModal('reportModal');
+}
+
+
+async function handleReportFormSubmit(e) {
+  e.preventDefault();
+  
+  
+  const form = e.target;
+  const data = Object.fromEntries(new FormData(form).entries());
+  const messageElement = document.getElementById('formMessage');
+  
+  try {
+    
+    const res = await fetch('/api/report/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    const result = await res.json();
+    
+    
+    if (res.ok) {
+      messageElement.textContent = 'Pet reported successfully!';
+      messageElement.className = 'form-message success';
+      
+      
+      setTimeout(() => {
+        form.reset();
+        closeModal('reportModal');
+        refreshAllData();
+      }, 1500);
+    } else {
+      messageElement.textContent = result.error || 'Failed to report pet.';
+      messageElement.className = 'form-message error';
+    }
+  } catch (err) {
+    messageElement.textContent = 'An error occurred. Please try again.';
+    messageElement.className = 'form-message error';
+    console.error('Form submission error:', err);
+  }
+}
+
+
+async function loadDashboard() {
+  try {
+    
+    const [lostRes, foundRes] = await Promise.all([
+      fetch('/api/lost/'),
+      fetch('/api/found/')
+    ]);
+    
+    const lostData = await lostRes.json();
+    const foundData = await foundRes.json();
+    
+    
+    lostPets = lostData.lost_pets || [];
+    foundPets = foundData.found_pets || [];
+    
+    
+    updateDashboardStats();
+    
+    
+    const recentLostPets = [...lostPets].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+    const recentFoundPets = [...foundPets].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+    
+    renderPetCards('dashboard-lost', recentLostPets, false);
+    renderPetCards('dashboard-found', recentFoundPets, false);
+    
+    
+    renderCharts();
+    
+    
+    updatePetTypeFilters();
+    
+  } catch (err) {
+    console.error('Error loading dashboard data:', err);
+    showErrorMessage('dashboard', 'Failed to load dashboard data. Please refresh the page.');
+  }
+}
+
+async function loadLostPets() {
+  try {
+    const res = await fetch('/api/lost/');
+    const data = await res.json();
+    
+    lostPets = data.lost_pets || [];
+    
+    
+    if (lostPets.length === 0) {
+      document.getElementById('lost-list').innerHTML = '';
+      document.getElementById('lost-empty-state').style.display = 'flex';
+    } else {
+      document.getElementById('lost-empty-state').style.display = 'none';
+      renderPetCards('lost-list', lostPets, true);
+    }
+    
+    
+    updatePetTypeFilters();
+    
+  } catch (err) {
+    console.error('Error loading lost pets:', err);
+    showErrorMessage('lost-list', 'Failed to load lost pets. Please refresh the page.');
+  }
+}
+
+async function loadFoundPets() {
+  try {
+    const res = await fetch('/api/found/');
+    const data = await res.json();
+    
+    foundPets = data.found_pets || [];
+    
+    
+    if (foundPets.length === 0) {
+      document.getElementById('found-list').innerHTML = '';
+      document.getElementById('found-empty-state').style.display = 'flex';
+    } else {
+      document.getElementById('found-empty-state').style.display = 'none';
+      renderPetCards('found-list', foundPets, true);
+    }
+    
+    
+    updatePetTypeFilters();
+    
+  } catch (err) {
+    console.error('Error loading found pets:', err);
+    showErrorMessage('found-list', 'Failed to load found pets. Please refresh the page.');
+  }
+}
+
+function handleEditFormSubmit(e) {
+  e.preventDefault();
+
+  const form = e.target;
+  const formData = new FormData(form);
+  const petId = formData.get('id');
+
+  const data = {};
+  formData.forEach((value, key) => {
+      data[key] = value;
+  });
+
+  const messageElement = document.getElementById('editFormMessage');
+
+  fetch(`/api/pet/${petId}/edit/`, {  
+    method: 'PUT',
+    headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+    },
+    body: JSON.stringify(data)
+})
+  .then(res => {
+      if (!res.ok) {
+          return res.json().then(err => {
+              throw new Error(err.error || 'Failed to update pet.');
+          });
+      }
+      return res.json();
+  })
+  .then(result => {
+      messageElement.textContent = 'Pet updated successfully!';
+      messageElement.className = 'form-message success';
+
+      setTimeout(() => {
+          closeModal('editModal');
+          refreshAllData();
+      }, 1500);
+  })
+  .catch(err => {
+      messageElement.textContent = err.message || 'An error occurred. Please try again.';
+      messageElement.className = 'form-message error';
+      console.error('Form submission error:', err);
+  });
+}
+
+
+function renderPetCards(containerId, pets, showActions = false) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  
+  if (pets.length === 0) {
+    container.innerHTML = '<p class="no-pets-message">No pets to display.</p>';
+    return;
+  }
+  
+  pets.forEach(pet => {
+    
+    const dateObj = new Date(pet.date);
+    const formattedDate = dateObj.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+    
+    
+    const card = document.createElement('div');
+    card.className = `pet-card ${pet.status}-pet`;
+    card.onclick = () => openPetDetailsModal(pet);
+    
+    
+    card.innerHTML = `
+      <span class="status-badge ${pet.status}">${pet.status}</span>
+      <h3 class="pet-name">${pet.pet_name || 'Unnamed Pet'}</h3>
+      <p class="pet-type">${pet.pet_type}</p>
+      
+      <div class="pet-info">
+        <div class="pet-info-item">
+          <i class="fas fa-map-marker-alt pet-info-icon"></i>
+          <span>${pet.location}</span>
+        </div>
+        <div class="pet-info-item">
+          <i class="fas fa-calendar-alt pet-info-icon"></i>
+          <span>${formattedDate}</span>
+        </div>
+      </div>
+      
+      <p class="pet-description">${pet.description}</p>
+    `;
+    
+    
+    if (showActions) {
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+      actions.innerHTML = `
+        <button class="card-btn edit-btn" onclick="event.stopPropagation(); editPet(${pet.id})">
+          <i class="fas fa-edit"></i> Edit
+        </button>
+        <button class="card-btn delete-btn" onclick="event.stopPropagation(); deletePet(${pet.id})">
+          <i class="fas fa-trash-alt"></i> Delete
+        </button>
+        ${pet.status === 'lost' ? `
+          <button class="card-btn mark-found-btn" onclick="event.stopPropagation(); markAsFound(${pet.id})">
+            <i class="fas fa-check"></i> Mark Found
+          </button>
+        ` : ''}
+      `;
+      card.appendChild(actions);
+    }
+    
+    container.appendChild(card);
+  });
+}
+
+
+function openPetDetailsModal(pet) {
+  
+  const dateObj = new Date(pet.date);
+  const formattedDate = dateObj.toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  
+  document.getElementById('modalTitle').textContent = pet.pet_name || 'Unnamed Pet';
+  document.getElementById('modalType').textContent = pet.pet_type;
+  document.getElementById('modalDescription').textContent = pet.description;
+  
+  
+  const statusBadge = document.getElementById('modalStatusBadge');
+  statusBadge.textContent = pet.status.charAt(0).toUpperCase() + pet.status.slice(1);
+  statusBadge.className = `status-badge ${pet.status}`;
+  
+  document.getElementById('modalLocation').textContent = pet.location;
+  document.getElementById('modalDate').textContent = formattedDate;
+  document.getElementById('modalContact').textContent = pet.contact_info;
+  
+  
+  const actionsContainer = document.getElementById('modalActions');
+  actionsContainer.innerHTML = `
+    <button class="edit-btn card-btn" onclick="editPet(${pet.id})">
+      <i class="fas fa-edit"></i> Edit
+    </button>
+    <button class="delete-btn card-btn" onclick="deletePet(${pet.id})">
+      <i class="fas fa-trash-alt"></i> Delete
+    </button>
+    ${pet.status === 'lost' ? `
+      <button class="mark-found-btn card-btn" onclick="markAsFound(${pet.id})">
+        <i class="fas fa-check"></i> Mark as Found
+      </button>
+    ` : ''}
+  `;
+  
+  
+  openModal('petModal');
+}
+
+
+async function deletePet(id) {
+  
+  closeModal('petModal');
+  
+  
+  document.getElementById('confirmMessage').textContent = 'Are you sure you want to delete this pet record? This action cannot be undone.';
+  
+  
+  document.getElementById('confirmYes').onclick = async () => {
+    try {
+      
+      function getCsrfToken() {
+        const name = 'csrftoken';
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+          const cookies = document.cookie.split(';');
+          for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+            }
+          }
+        }
+        return cookieValue;
+      }
+      
+      const res = await fetch(`/api/pet/${id}/delete/`, {  
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken()
+        }
+    });
+      
+      if (res.ok) {
+        closeModal('confirmModal');
+        refreshAllData();
+        showTemporaryMessage('Pet record deleted successfully.');
+      } else {
+        const data = await res.json();
+        showTemporaryMessage(data.error || 'Failed to delete pet record.', 'error');
+      }
+    } catch (err) {
+      console.error('Error deleting pet:', err);
+      showTemporaryMessage('An error occurred while deleting the pet record.', 'error');
+    }
+  };
+  
+  openModal('confirmModal');
+}
+async function deleteAllPets(status) {
+  try {
+      const res = await fetch(`/api/${status}/delete_all/`, {  
+        method: 'DELETE',
+          headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken()
+          }
+      });
+
+      if (res.ok) {
+          const data = await res.json(); 
+          console.log('Successfully deleted all', status, 'pets:', data); 
+          showTemporaryMessage(data.message || `Successfully deleted all ${status} pets.`, 'success');
+          refreshAllData(); 
+      } else {
+          let errorMessage = `Failed to delete all ${status} pets.`;
+          try {
+              const errorData = await res.json(); 
+              errorMessage = errorData.error || errorMessage;
+          } catch (jsonError) {
+              console.error('Error parsing error response:', jsonError);
+              
+          }
+          console.error('Error deleting all', status, 'pets:', errorMessage);
+          showTemporaryMessage(errorMessage, 'error');
+      }
+
+  } catch (error) {
+      console.error('Network error deleting all', status, 'pets:', error);
+      showTemporaryMessage('A network error occurred while deleting pets.', 'error');
+  }
+}
+
+async function markAsFound(id) {
+  closeModal('petModal');
+  
+  try {
+    const res = await fetch(`/api/pet/${id}/mark_found/`, { 
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      }
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok) {
+      refreshAllData();
+      showTemporaryMessage('Pet marked as found successfully!');
+    } else {
+      showTemporaryMessage(data.error || 'Failed to mark pet as found.', 'error');
+    }
+  } catch (err) {
+    console.error('Error marking pet as found:', err);
+    showTemporaryMessage('An error occurred. Please try again.', 'error');
+  }
+}
+
+
+function editPet(id) {
+  
+  closeModal('petModal');
+  
+  
+  let pet;
+  let isLost = false;
+  
+  for (const lostPet of lostPets) {
+    if (lostPet.id === id) {
+      pet = lostPet;
+      isLost = true;
+      break;
+    }
+  }
+  
+  if (!pet) {
+    for (const foundPet of foundPets) {
+      if (foundPet.id === id) {
+        pet = foundPet;
+        break;
+      }
+    }
+  }
+  
+  if (!pet) {
+    showTemporaryMessage('Pet not found. Please refresh the page.', 'error');
+    return;
+  }
+  
+  
+  const form = document.getElementById('editForm');
+  
+  
+  document.getElementById('edit-pet-id').value = pet.id;
+  
+  
+  const statusField = document.getElementById('edit-status');
+  statusField.value = pet.status;
+  statusField.disabled = pet.status === 'found';
+  
+  
+  document.getElementById('edit-pet-name').value = pet.pet_name || '';
+  document.getElementById('edit-pet-type').value = pet.pet_type;
+  document.getElementById('edit-date').value = pet.date ? new Date(pet.date).toISOString().split('T')[0] : '';
+  document.getElementById('edit-location').value = pet.location;
+  document.getElementById('edit-description').value = pet.description;
+  document.getElementById('edit-contact-info').value = pet.contact_info;
+  
+  
+  openModal('editModal');
+}
+
+function renderCharts() {
+  
+  if (window.lostPetsChart) window.lostPetsChart.destroy();
+  if (window.foundPetsChart) window.foundPetsChart.destroy();
+  
+  
+  const lostTypes = countPetTypes(lostPets);
+  const foundTypes = countPetTypes(foundPets);
+  
+  
+  const lostColorsArray = ['#ff9800', '#ff7043', '#ff5722', '#f4511e', '#e64a19', '#d84315'];
+  const foundColorsArray = ['#4caf50', '#66bb6a', '#81c784', '#a5d6a7', '#c8e6c9', '#e8f5e9'];
+  
+  
+  const lostColors = generateColors(Object.keys(lostTypes).length, lostColorsArray);
+  const foundColors = generateColors(Object.keys(foundTypes).length, foundColorsArray);
+  
+  
+  window.lostPetsChart = new Chart(document.getElementById('lostChart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(lostTypes),
+      datasets: [{
+        data: Object.values(lostTypes),
+        backgroundColor: lostColors,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 20,
+            boxWidth: 12
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const label = context.label || '';
+              const value = context.raw || 0;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = Math.round((value / total) * 100);
+              return `${label}: ${value} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+  
+  window.foundPetsChart = new Chart(document.getElementById('foundChart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(foundTypes),
+      datasets: [{
+        data: Object.values(foundTypes),
+        backgroundColor: foundColors,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 20,
+            boxWidth: 12
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const label = context.label || '';
+              const value = context.raw || 0;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = Math.round((value / total) * 100);
+              return `${label}: ${value} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+
+function updateDashboardStats() {
+  
+  document.querySelector('#total-lost .stat-count').textContent = lostPets.length;
+  
+  
+  document.querySelector('#total-found .stat-count').textContent = foundPets.length;
+  
+  
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  
+  const recentLost = lostPets.filter(pet => new Date(pet.date) >= sevenDaysAgo).length;
+  const recentFound = foundPets.filter(pet => new Date(pet.date) >= sevenDaysAgo).length;
+  
+  document.querySelector('#recent-activity .stat-count').textContent = recentLost + recentFound;
+}
+
+
+function applyLostFilters() {
+  const searchTerm = document.getElementById('lost-search').value.toLowerCase();
+  const typeFilter = document.getElementById('lost-type-filter').value;
+  const sortOption = document.getElementById('lost-sort').value;
+  
+  
+  let filteredPets = lostPets.filter(pet => {
+    
+    const matchesSearch = 
+      (pet.pet_name && pet.pet_name.toLowerCase().includes(searchTerm)) ||
+      pet.pet_type.toLowerCase().includes(searchTerm) ||
+      pet.description.toLowerCase().includes(searchTerm) ||
+      pet.location.toLowerCase().includes(searchTerm);
+    
+    
+    const matchesType = typeFilter === '' || pet.pet_type === typeFilter;
+    
+    return matchesSearch && matchesType;
+  });
+  
+  
+  filteredPets.sort((a, b) => {
+    switch (sortOption) {
+      case 'date-desc':
+        return new Date(b.date) - new Date(a.date);
+      case 'date-asc':
+        return new Date(a.date) - new Date(b.date);
+      case 'name':
+        const nameA = a.pet_name || 'Unnamed';
+        const nameB = b.pet_name || 'Unnamed';
+        return nameA.localeCompare(nameB);
+      default:
+        return 0;
+    }
+  });
+  
+  
+  if (filteredPets.length === 0) {
+    document.getElementById('lost-list').innerHTML = '<p class="no-results">No matching pets found.</p>';
+  } else {
+    renderPetCards('lost-list', filteredPets, true);
+  }
+}
+
+
+function applyFoundFilters() {
+  const searchTerm = document.getElementById('found-search').value.toLowerCase();
+  const typeFilter = document.getElementById('found-type-filter').value;
+  const sortOption = document.getElementById('found-sort').value;
+  
+  
+  let filteredPets = foundPets.filter(pet => {
+    
+    const matchesSearch = 
+      (pet.pet_name && pet.pet_name.toLowerCase().includes(searchTerm)) ||
+      pet.pet_type.toLowerCase().includes(searchTerm) ||
+      pet.description.toLowerCase().includes(searchTerm) ||
+      pet.location.toLowerCase().includes(searchTerm);
+    
+    
+    const matchesType = typeFilter === '' || pet.pet_type === typeFilter;
+    
+    return matchesSearch && matchesType;
+  });
+  
+  
+  filteredPets.sort((a, b) => {
+    switch (sortOption) {
+      case 'date-desc':
+        return new Date(b.date) - new Date(a.date);
+      case 'date-asc':
+        return new Date(a.date) - new Date(b.date);
+      case 'name':
+        const nameA = a.pet_name || 'Unnamed';
+        const nameB = b.pet_name || 'Unnamed';
+        return nameA.localeCompare(nameB);
+        default:
+          return 0;
+        }
+      });
+          
+  if (filteredPets.length === 0) {
+    document.getElementById('found-list').innerHTML = '<p class="no-results">No matching pets found.</p>';
+  } else {
+    renderPetCards('found-list', filteredPets, true);
+  }
+}
+
+
+function updatePetTypeFilters() {
+  
+  allPetTypes.clear();
+  
+  lostPets.forEach(pet => allPetTypes.add(pet.pet_type));
+  foundPets.forEach(pet => allPetTypes.add(pet.pet_type));
+  
+  const petTypes = Array.from(allPetTypes).sort();
+  
+  
+  const lostFilter = document.getElementById('lost-type-filter');
+  updateFilterOptions(lostFilter, petTypes);
+  
+  
+  const foundFilter = document.getElementById('found-type-filter');
+  updateFilterOptions(foundFilter, petTypes);
+}
+
+
+function updateFilterOptions(selectElement, options) {
+  
+  const currentValue = selectElement.value;
+  
+  
+  while (selectElement.options.length > 1) {
+    selectElement.remove(1);
+  }
+  
+  
+  options.forEach(option => {
+    const optElement = document.createElement('option');
+    optElement.value = option;
+    optElement.textContent = option;
+    selectElement.appendChild(optElement);
+  });
+  
+  
+  if (options.includes(currentValue)) {
+    selectElement.value = currentValue;
+  } else {
+    selectElement.selectedIndex = 0; 
+  }
+}
+
+
+function countPetTypes(pets) {
+  const counts = {};
+  
+  pets.forEach(pet => {
+    const type = pet.pet_type;
+    counts[type] = (counts[type] || 0) + 1;
+  });
+  
+  return counts;
+}
+
+
+function generateColors(count, colorPalette) {
+  const colors = [];
+  
+  for (let i = 0; i < count; i++) {
+    const index = i % colorPalette.length;
+    colors.push(colorPalette[index]);
+  }
+  
+  return colors;
+}
+
+
+function showTemporaryMessage(message, type = 'success') {
+  const messageElement = document.getElementById('app-message');
+  messageElement.textContent = message;
+  messageElement.className = `app-message ${type}`;
+  messageElement.style.display = 'block';
+  
+  
+  setTimeout(() => {
+    messageElement.style.display = 'none';
+  }, 3000);
+}
+
+
+function showErrorMessage(containerId, message) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> ${message}</div>`;
+}
+
+
+function refreshAllData() {
+  const activeTab = document.querySelector('nav button.active');
+  if (activeTab) {
+    
+    const tabName = activeTab.getAttribute('onclick').match(/'([^']+)'/)[1];
+    switchTab(tabName);
+  } else {
+    
+    switchTab('dashboard');
+  }
+}
+
+
+function searchPotentialMatches(pet) {
+  const isLost = pet.status === 'lost';
+  const searchAgainst = isLost ? foundPets : lostPets;
+  
+  
+  const petDate = new Date(pet.date);
+  const lowerDate = new Date(petDate);
+  lowerDate.setDate(lowerDate.getDate() - 7);
+  const upperDate = new Date(petDate);
+  upperDate.setDate(upperDate.getDate() + 7);
+  
+  
+  const matches = searchAgainst.filter(otherPet => {
+    
+    if (pet.pet_type !== otherPet.pet_type) return false;
+    
+    
+    const otherDate = new Date(otherPet.date);
+    if (otherDate < lowerDate || otherDate > upperDate) return false;
+    
+    
+    if (!pet.location.toLowerCase().includes(otherPet.location.toLowerCase()) && 
+        !otherPet.location.toLowerCase().includes(pet.location.toLowerCase())) {
+      return false;
+    }
+    
+    
+    return true;
+  });
+  
+  return matches;
+}
+
+
+function showPotentialMatches(pet) {
+  const matches = searchPotentialMatches(pet);
+  
+  
+  const matchesContainer = document.getElementById('potentialMatches');
+  matchesContainer.innerHTML = '';
+  
+  if (matches.length === 0) {
+    matchesContainer.innerHTML = '<p>No potential matches found at this time.</p>';
+    return;
+  }
+  
+  
+  matches.forEach(match => {
+    const matchItem = document.createElement('div');
+    matchItem.className = 'match-item';
+    
+    
+    const dateObj = new Date(match.date);
+    const formattedDate = dateObj.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+    
+    matchItem.innerHTML = `
+      <h4>${match.pet_name || 'Unnamed Pet'} (${match.pet_type})</h4>
+      <p class="match-location"><i class="fas fa-map-marker-alt"></i> ${match.location}</p>
+      <p class="match-date"><i class="fas fa-calendar-alt"></i> ${formattedDate}</p>
+      <p class="match-description">${match.description}</p>
+      <button class="view-details-btn" onclick="openPetDetailsModal(${JSON.stringify(match).replace(/"/g, '&quot;')})">
+        View Details
+      </button>
+    `;
+    
+    matchesContainer.appendChild(matchItem);
+  });
+  
+  
+  openModal('matchesModal');
+}
+
+
+function exportToCSV(data, filename) {
+  
+  let csvContent = '';
+  
+  
+  const keys = new Set();
+  data.forEach(item => {
+    Object.keys(item).forEach(key => keys.add(key));
+  });
+  
+  
+  csvContent += Array.from(keys).join(',') + '\n';
+  
+  
+  data.forEach(item => {
+    const row = Array.from(keys).map(key => {
+      
+      const value = item[key] !== undefined ? item[key] : '';
+      return typeof value === 'string' ? 
+        '"' + value.replace(/"/g, '""') + '"' : 
+        value;
+    });
+    csvContent += row.join(',') + '\n';
+  });
+  
+  
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+
+function exportLostPets() {
+  exportToCSV(lostPets, 'lost_pets.csv');
+}
+
+function exportFoundPets() {
+  exportToCSV(foundPets, 'found_pets.csv');
+}
+
+
+function printPetList(status) {
+  const pets = status === 'lost' ? lostPets : foundPets;
+
+  
+  const printWindow = window.open('', '_blank');
+
+  
+  let content = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Pet Finder - ${status.charAt(0).toUpperCase() + status.slice(1)} Pets</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .print-date { color: #666; margin-bottom: 30px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+      </style>
+    </head>
+    <body>
+      <h1>Pet Finder - ${status.charAt(0).toUpperCase() + status.slice(1)} Pets</h1>
+      <p class="print-date">Generated on: ${new Date().toLocaleDateString()}</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Location</th>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Contact</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+  
+  pets.forEach(pet => {
+    const petDate = pet.date ? new Date(pet.date).toLocaleDateString() : 'Unknown';
+    content += `
+          <tr>
+            <td>${pet.pet_name || 'Unnamed'}</td>
+            <td>${pet.pet_type}</td>
+            <td>${pet.location}</td>
+            <td>${petDate}</td>
+            <td>${pet.description}</td>
+            <td>${pet.contact_info}</td>
+          </tr>
+    `;
+  });
+
+  
+  content += `
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `;
+
+  
+  printWindow.document.open();
+  printWindow.document.write(content);
+  printWindow.document.close();
+
+  
+  printWindow.onload = function() {
+    printWindow.print();
+  };
+}
+
+
+function initMaps() {
+  
+  const mapsContainer = document.getElementById('maps-container');
+  if (!mapsContainer) return;
+  
+  
+  mapsContainer.innerHTML = '';
+  
+  
+  const lostMapElement = document.createElement('div');
+  lostMapElement.id = 'lost-map';
+  lostMapElement.className = 'map';
+  
+  const foundMapElement = document.createElement('div');
+  foundMapElement.id = 'found-map';
+  foundMapElement.className = 'map';
+  
+  
+  mapsContainer.appendChild(lostMapElement);
+  mapsContainer.appendChild(foundMapElement);
+  
+  
+  if (window.google && window.google.maps) {
+    initializeMapWithMarkers('lost-map', lostPets);
+    initializeMapWithMarkers('found-map', foundPets);
+  } else {
+    
+    lostMapElement.innerHTML = '<p class="map-fallback">Map feature requires Google Maps API</p>';
+    foundMapElement.innerHTML = '<p class="map-fallback">Map feature requires Google Maps API</p>';
+  }
+}
+
+
+function initializeMapWithMarkers(mapElementId, pets) {
+  
+  
+  
+  const mapElement = document.getElementById(mapElementId);
+  mapElement.innerHTML = '<p class="map-fallback">Map visualization coming soon</p>';
+}
+
+
+function openHelpTutorial() {
+  openModal('helpModal');
+}
+
+
+let appSettings = {
+  darkMode: false,
+  notificationsEnabled: true,
+  autoRefreshInterval: 5 
+};
+
+
+function loadSettings() {
+  const savedSettings = localStorage.getItem('petFinderSettings');
+  if (savedSettings) {
+    appSettings = JSON.parse(savedSettings);
+    applySettings();
+  }
+}
+
+
+function saveSettings() {
+  localStorage.setItem('petFinderSettings', JSON.stringify(appSettings));
+  showTemporaryMessage('Settings saved successfully');
+}
+
+
+function applySettings() {
+  
+  document.body.classList.toggle('dark-mode', appSettings.darkMode);
+  
+  
+  if (appSettings.autoRefreshInterval > 0) {
+    
+    if (window.autoRefreshTimer) {
+      clearInterval(window.autoRefreshTimer);
+    }
+    
+    
+    const intervalMs = appSettings.autoRefreshInterval * 60 * 1000;
+    window.autoRefreshTimer = setInterval(refreshAllData, intervalMs);
+  }
+}
+
+
+function toggleDarkMode() {
+  appSettings.darkMode = !appSettings.darkMode;
+  applySettings();
+  saveSettings();
+}
+
+
+document.addEventListener('DOMContentLoaded', function() {
+  
+  loadSettings();
+  refreshAllData();
+  
+  
+  
+
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  
+  const editForm = document.getElementById('editForm');
+  if (editForm) {
+    editForm.addEventListener('submit', handleEditFormSubmit);
+  }
+});
+
+
+
+
+style.css
+
+* {
+    box-sizing: border-box;
+    margin: 0;
+    padding: 0;
+  }
+  
+  body {
+    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+    background: linear-gradient(to right, #fff5e6, #ffe0cc);
+    color: #333;
+    line-height: 1.6;
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+  
+  #app {
+    display: flex;
+    flex-direction: column;
+    min-height: 100vh;
+  }
+  
+  
+  header {
+    background: #fff8f0;
+    padding: 1.5rem;
+    border-bottom: 2px solid #ffc58b;
+    box-shadow: 0 2px 10px rgba(0,0,0,0.08);
+  }
+  
+  .logo-container {
+    display: flex;
+    align-items: center;
+  }
+  
+  .logo-icon {
+    font-size: 2.5rem;
+    color: #f26b6b;
+    margin-right: 0.5rem;
+  }
+  
+  h1 {
+    font-size: 2.5rem;
+    color: #f26b6b;
+    margin: 0;
+    letter-spacing: 1px;
+  }
+  
+  .tagline {
+    color: #888;
+    font-style: italic;
+    margin-top: 0.2rem;
+    margin-bottom: 1rem;
+  }
+  
+  nav {
+    display: flex;
+    gap: 0.5rem;
+    flex-wrap: wrap;
+    margin-top: 1rem;
+  }
+  
+  .nav-btn, .report-btn {
+    padding: 0.7rem 1.5rem;
+    border: none;
+    border-radius: 30px;
+    font-weight: bold;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .nav-btn {
+    background: #fff;
+    color: #666;
+    border: 1px solid #ffd0a3;
+  }
+  
+  .nav-btn:hover, .nav-btn.active {
+    background: #ffb86b;
+    color: white;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(255, 184, 107, 0.3);
+  }
+  
+  .report-btn {
+    background: #f26b6b;
+    color: white;
+    margin-left: auto;
+  }
+  
+  .report-btn:hover {
+    background: #e05050;
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(242, 107, 107, 0.3);
+  }
+  
+  
+  main {
+    flex: 1;
+    padding: 2rem;
+    max-width: 1200px;
+    margin: 0 auto;
+    width: 100%;
+  }
+  
+  .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 1.5rem;
+  }
+  
+  h2 {
+    font-size: 1.8rem;
+    color: #444;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  
+  .stats-container {
+    display: flex;
+    gap: 1.5rem;
+    flex-wrap: wrap;
+    margin-bottom: 2rem;
+  }
+  
+  .stat-card {
+    flex: 1;
+    min-width: 240px;
+    background: white;
+    border-radius: 15px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    display: flex;
+    align-items: center;
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+  
+  .stat-card:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+  }
+  
+  .stat-icon {
+    font-size: 2.5rem;
+    margin-right: 1rem;
+    padding: 1rem;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+  
+  #total-lost .stat-icon {
+    color: #ff9800;
+    background: rgba(255, 152, 0, 0.1);
+  }
+  
+  #total-found .stat-icon {
+    color: #4caf50;
+    background: rgba(76, 175, 80, 0.1);
+  }
+  
+  #recent-activity .stat-icon {
+    color: #2196f3;
+    background: rgba(33, 150, 243, 0.1);
+  }
+  
+  .stat-details h3 {
+    font-size: 1rem;
+    font-weight: 500;
+    color: #666;
+    margin-bottom: 0.3rem;
+  }
+  
+  .stat-count {
+    font-size: 2rem;
+    font-weight: bold;
+    color: #333;
+  }
+  
+  
+  .dashboard-lists {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+    margin-bottom: 2rem;
+  }
+  
+  .list-section {
+    flex: 1;
+    min-width: 300px;
+    background: white;
+    border-radius: 15px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+  }
+  
+  .list-section h3 {
+    color: #555;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .dashboard-pet-list {
+    min-height: 200px;
+    max-height: 300px;
+    overflow-y: auto;
+  }
+  
+  .view-all-btn {
+    display: block;
+    width: 100%;
+    padding: 0.8rem;
+    margin-top: 1rem;
+    background: none;
+    border: 1px solid #ffb86b;
+    color: #ff9844;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .view-all-btn:hover {
+    background: #fff3e6;
+  }
+  
+  
+  .charts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 2rem;
+  }
+  
+  .chart-section {
+    flex: 1;
+    min-width: 300px;
+    background: white;
+    border-radius: 15px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    transition: transform 0.3s ease, box-shadow 0.3s ease;
+  }
+  
+  .chart-section:hover {
+    transform: translateY(-5px);
+    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+  }
+  
+  .chart-section h3 {
+    color: #555;
+    margin-bottom: 1rem;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  
+  .section-controls {
+    display: flex;
+    align-items: center;
+    gap: 0.8rem;
+  }
+  
+  .search-input {
+    padding: 0.6rem 1rem;
+    border: 1px solid #ddd;
+    border-radius: 30px;
+    font-size: 0.9rem;
+    width: 250px;
+    transition: all 0.3s ease;
+  }
+  
+  .search-input:focus {
+    border-color: #ffb86b;
+    box-shadow: 0 0 0 2px rgba(255, 184, 107, 0.2);
+    outline: none;
+  }
+  
+  .info-btn {
+    background: none;
+    border: none;
+    font-size: 1.2rem;
+    color: #888;
+    cursor: pointer;
+    transition: color 0.3s ease;
+  }
+  
+  .info-btn:hover {
+    color: #f26b6b;
+  }
+  
+  .delete-all-btn {
+    padding: 0.6rem 1rem;
+    background: #fff0ea;
+    color: #ff5252;
+    border: 1px solid #ffcfc9;
+    border-radius: 30px;
+    font-size: 0.9rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  
+  .delete-all-btn:hover {
+    background: #ffe5e0;
+  }
+  
+  .filter-controls {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem;
+    margin-bottom: 1.5rem;
+    background: #fff;
+    padding: 1rem;
+    border-radius: 10px;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+  }
+  
+  .filter-group {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .filter-group label {
+    font-size: 0.9rem;
+    font-weight: 500;
+    color: #666;
+  }
+  
+  .filter-group select {
+    padding: 0.5rem;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+    background-color: #fff;
+    cursor: pointer;
+    transition: border-color 0.3s ease;
+  }
+  
+  .filter-group select:focus {
+    border-color: #ffb86b;
+    outline: none;
+  }
+  
+  
+  .pet-list-container {
+    background: #fff;
+    border-radius: 10px;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.06);
+    overflow: hidden;
+    min-height: 400px;
+  }
+  
+  .pet-list {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+    gap: 1rem;
+    padding: 1.5rem;
+  }
+  
+  .pet-card {
+    background: #fff7ef;
+    border-radius: 12px;
+    border-left: 5px solid #ffb86b;
+    padding: 1.2rem;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    position: relative;
+    overflow: hidden;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+  }
+  
+  .pet-card:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 15px rgba(0,0,0,0.1);
+  }
+  
+  .pet-card.lost-pet {
+    border-left-color: #ff9800;
+  }
+  
+  .pet-card.found-pet {
+    border-left-color: #4caf50;
+  }
+  
+  .pet-name {
+    font-size: 1.2rem;
+    font-weight: 600;
+    margin-bottom: 0.3rem;
+    color: #444;
+  }
+  
+  .pet-type {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 0.8rem;
+  }
+  
+  .pet-info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+    margin-bottom: 1rem;
+  }
+  
+  .pet-info-item {
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+    font-size: 0.85rem;
+  }
+  
+  .pet-info-icon {
+    color: #ffb86b;
+    width: 18px;
+  }
+  
+  .pet-description {
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 1rem;
+    display: -webkit-box;
+    line-clamp: 2;
+    -webkit-line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  
+  .status-badge {
+    position: absolute;
+    top: 0.8rem;
+    right: 0.8rem;
+    padding: 0.3rem 0.8rem;
+    border-radius: 30px;
+    font-size: 0.75rem;
+    font-weight: 500;
+    text-transform: uppercase;
+  }
+  
+  .status-badge.lost {
+    background: rgba(255, 152, 0, 0.15);
+    color: #ff9800;
+  }
+  
+  .status-badge.found {
+    background: rgba(76, 175, 80, 0.15);
+    color: #4caf50;
+  }
+  
+  .card-actions {
+    display: flex;
+    gap: 0.5rem;
+    justify-content: flex-end;
+    margin-top: 0.5rem;
+  }
+  
+  .card-btn {
+    padding: 0.4rem 0.8rem;
+    border-radius: 5px;
+    font-size: 0.8rem;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 0.3rem;
+    border: none;
+  }
+  
+  .edit-btn {
+    background: #e3f2fd;
+    color: #2196f3;
+  }
+  
+  .edit-btn:hover {
+    background: #bbdefb;
+  }
+  
+  .delete-btn {
+    background: #ffebee;
+    color: #f44336;
+  }
+  
+  .delete-btn:hover {
+    background: #ffcdd2;
+  }
+  
+  .mark-found-btn {
+    background: #e8f5e9;
+    color: #4caf50;
+  }
+  
+  .mark-found-btn:hover {
+    background: #c8e6c9;
+  }
+  
+  
+  .empty-state {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    padding: 3rem;
+    text-align: center;
+  }
+  
+  .empty-icon {
+    font-size: 3rem;
+    color: #ddd;
+    margin-bottom: 1rem;
+  }
+  
+  .empty-state p {
+    color: #888;
+    margin-bottom: 1.5rem;
+  }
+  
+  .cta-btn {
+    padding: 0.8rem 1.5rem;
+    background: #ffb86b;
+    color: white;
+    border: none;
+    border-radius: 30px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .cta-btn:hover {
+    background: #ff9844;
+    transform: translateY(-2px);
+  }
+  
+  
+  .modal {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(0, 0, 0, 0.6);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 1000;
+    opacity: 1;
+    transition: opacity 0.3s ease;
+  }
+  
+  .modal.hidden {
+    opacity: 0;
+    pointer-events: none;
+  }
+  
+  .modal-content {
+    background: white;
+    width: 90%;
+    max-width: 550px;
+    border-radius: 15px;
+    box-shadow: 0 10px 25px rgba(0, 0, 0, 0.15);
+    position: relative;
+    max-height: 90vh;
+    overflow-y: auto;
+    animation: modalSlideIn 0.3s ease;
+  }
+  
+  @keyframes modalSlideIn {
+    from {
+      transform: translateY(20px);
+      opacity: 0;
+    }
+    to {
+      transform: translateY(0);
+      opacity: 1;
+    }
+  }
+  
+  .close-btn {
+    position: absolute;
+    top: 1.2rem;
+    right: 1.5rem;
+    font-size: 1.5rem;
+    color: #999;
+    cursor: pointer;
+    transition: color 0.2s ease;
+  }
+  
+  .close-btn:hover {
+    color: #333;
+  }
+  
+  .modal-content h3 {
+    font-size: 1.5rem;
+    color: #f26b6b;
+    margin-bottom: 1.5rem;
+    padding: 1.5rem 1.5rem 0;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  
+  .pet-modal-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 1.5rem 1.5rem 0;
+  }
+  
+  .pet-modal-header h3 {
+    padding: 0;
+    margin: 0;
+  }
+  
+  .pet-details {
+    padding: 0 1.5rem;
+  }
+  
+  .detail-group {
+    display: flex;
+    margin-bottom: 1rem;
+    padding-bottom: 1rem;
+    border-bottom: 1px solid #f0f0f0;
+  }
+  
+  .detail-group:last-child {
+    border-bottom: none;
+  }
+  
+  .detail-icon {
+    font-size: 1.2rem;
+    color: #ffb86b;
+    margin-right: 1rem;
+    width: 24px;
+  }
+  
+  .detail-group h4 {
+    font-size: 0.9rem;
+    color: #888;
+    margin-bottom: 0.2rem;
+  }
+  
+  .detail-group p {
+    font-size: 1rem;
+    color: #444;
+  }
+  
+  .modal-actions {
+    display: flex;
+    gap: 1rem;
+    padding: 1rem 1.5rem 1.5rem;
+    border-top: 1px solid #f0f0f0;
+    margin-top: 1rem;
+  }
+  
+  
+  form {
+    padding: 0 1.5rem;
+  }
+  
+  .form-group {
+    margin-bottom: 1.2rem;
+  }
+  
+  .form-group label {
+    display: block;
+    font-size: 0.9rem;
+    color: #666;
+    margin-bottom: 0.3rem;
+  }
+  
+  .form-group input,
+  .form-group textarea,
+  .form-group select {
+    width: 100%;
+    padding: 0.8rem;
+    border: 1px solid #ddd;
+    border-radius: 8px;
+    font-size: 1rem;
+    transition: border-color 0.3s;
+  }
+  
+  .form-group input:focus,
+  .form-group textarea:focus,
+  .form-group select:focus {
+    border-color: #ffb86b;
+    outline: none;
+    box-shadow: 0 0 0 2px rgba(255, 184, 107, 0.2);
+  }
+  
+  .form-group textarea {
+    min-height: 100px;
+    resize: vertical;
+  }
+  
+  .form-actions {
+    display: flex;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+  }
+  
+  .submit-btn {
+    flex: 1;
+    padding: 0.8rem;
+    background: #ffb86b;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .submit-btn:hover {
+    background: #ff9844;
+  }
+  
+  .cancel-btn {
+    padding: 0.8rem 1.5rem;
+    background: #f5f5f5;
+    color: #666;
+    border: none;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: background 0.3s ease;
+  }
+  
+  .cancel-btn:hover {
+    background: #e0e0e0;
+  }
+  
+  .danger-btn {
+    padding: 0.8rem 1.5rem;
+    background: #f44336;
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-weight: 500;
+    cursor: pointer;
+    transition: all 0.3s ease;
+  }
+  
+  .danger-btn:hover {
+    background: #d32f2f;
+  }
+  
+  .form-message {
+    padding: 0.8rem;
+    margin: 0 1.5rem 1.5rem;
+    border-radius: 8px;
+    font-size: 0.9rem;
+  }
+  
+  .form-message.success {
+    background: #e8f5e9;
+    color: #4caf50;
+  }
+  
+  .form-message.error {
+    background: #ffebee;
+    color: #f44336;
+  }
+  
+  
+  .confirmation-modal {
+    padding: 1.5rem;
+    text-align: center;
+  }
+  
+  .confirmation-modal h3 {
+    padding: 0;
+    margin-bottom: 1rem;
+  }
+  
+  .confirmation-modal p {
+    margin-bottom: 1.5rem;
+    color: #666;
+  }
+  
+  .confirm-actions {
+    display: flex;
+    justify-content: center;
+    gap: 1rem;
+  }
+  
+  
+  .info-modal h3 {
+    border-bottom: 1px solid #f0f0f0;
+    padding-bottom: 1rem;
+  }
+  
+  .info-content {
+    padding: 0 1.5rem 1.5rem;
+  }
+  
+  .info-content p {
+    margin-bottom: 1rem;
+    line-height: 1.6;
+  }
+  
+  .info-content ul {
+    margin-bottom: 1rem;
+    padding-left: 1.5rem;
+  }
+  
+  .info-content li {
+    margin-bottom: 0.5rem;
+  }
+  
+  
+  footer {
+    background: #fff8f0;
+    padding: 1.5rem;
+    text-align: center;
+    color: #888;
+    border-top: 1px solid #ffd0a3;
+    margin-top: 2rem;
+  }
+  
+  
+  @media (max-width: 768px) {
+    header {
+      padding: 1rem;
+    }
+    
+    h1 {
+      font-size: 2rem;
+    }
+    
+    .logo-icon {
+      font-size: 2rem;
+    }
+    
+    .nav-btn, .report-btn {
+      padding: 0.6rem 1rem;
+      font-size: 0.9rem;
+    }
+    
+    .report-btn {
+      margin-left: 0;
+      margin-top: 0.5rem;
+      width: 100%;
+      justify-content: center;
+    }
+    
+    main {
+      padding: 1rem;
+    }
+    
+    .section-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 1rem;
+    }
+    
+    .section-controls {
+      width: 100%;
+    }
+    
+    .search-input {
+      width: 100%;
+    }
+    
+    .pet-list {
+      grid-template-columns: 1fr;
+    }
+    
+    .stats-container {
+      flex-direction: column;
+    }
+    
+    .modal-content {
+      width: 95%;
+    }
+  }

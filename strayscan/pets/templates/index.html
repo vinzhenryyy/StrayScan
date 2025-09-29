@@ -1,0 +1,396 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <link rel="icon" type="image/png" href="{% static 'img/happypet.png' %}">
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>StrayScan</title>
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+    <link rel="stylesheet" href="{% static 'css/styles.css' %}">
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body>
+    <div id="app">
+        <header>
+            <div class="logo-container">
+                <i class="fas fa-paw logo-icon"></i>
+                <h1>StrayScan</h1>
+            </div>
+            <p class="tagline">Helping lost pets find their way home</p>
+        </header>
+        <nav>
+            <button class="nav-btn active" onclick="switchTab('dashboard')">
+                <i class="fas fa-home"></i> Dashboard
+            </button>
+            <button class="nav-btn" onclick="switchTab('lost')">
+                <i class="fas fa-search"></i> Lost Pets
+            </button>
+            <button class="nav-btn" onclick="switchTab('found')">
+                <i class="fas fa-check-circle"></i> Found Pets
+            </button>
+            <button class="report-btn" onclick="openReportModal()">
+                    <i class="fas fa-plus-circle"></i> Report Pet
+            </button>
+        </nav>
+
+        <main>
+            <section id="dashboard" class="tab">
+                <div class="section-header">
+                    <h2><i class="fas fa-chart-line"></i> Dashboard</h2>
+                    <button onclick="openModal('dashboardInfoModal')" class="info-btn" title="Dashboard Information">
+                        <i class="fas fa-info-circle"></i>
+                    </button>
+                </div>
+
+                <div class="stats-container">
+                    <div class="stat-card" id="total-lost">
+                        <i class="fas fa-exclamation-triangle stat-icon"></i>
+                        <div class="stat-details">
+                            <h3>Lost Pets</h3>
+                            <p class="stat-count">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="total-found">
+                        <i class="fas fa-check-circle stat-icon"></i>
+                        <div class="stat-details">
+                            <h3>Found Pets</h3>
+                            <p class="stat-count">0</p>
+                        </div>
+                    </div>
+                    <div class="stat-card" id="recent-activity">
+                        <i class="fas fa-clock stat-icon"></i>
+                        <div class="stat-details">
+                            <h3>Recent Activity</h3>
+                            <p class="stat-count" id="recent-count">0</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <div class="dashboard-lists"> 
+                    <div class="list-section">
+                        <h3><i class="fas fa-search"></i> Recently Lost Pets</h3>
+                        <div id="dashboard-lost" class="dashboard-pet-list"></div>
+                        <button class="view-all-btn" onclick="switchTab('lost')">View All Lost Pets</button>
+                    </div>
+                    <div class="list-section">
+                        <h3><i class="fas fa-check-circle"></i> Recently Found Pets</h3>
+                        <div id="dashboard-found" class="dashboard-pet-list"></div>
+                        <button class="view-all-btn" onclick="switchTab('found')">View All Found Pets</button>
+                    </div>
+                </div> 
+                
+                <div class="charts">
+                    <div class="chart-section">
+                        <h3><i class="fas fa-chart-pie"></i> Lost Pets By Type</h3>
+                        <canvas id="lostChart"></canvas>
+                    </div>
+                    <div class="chart-section">
+                        <h3><i class="fas fa-chart-pie"></i> Found Pets By Type</h3>
+                        <canvas id="foundChart"></canvas>
+                    </div>
+                </div>
+            </section>
+
+            <section id="lost" class="tab" style="display: none;">
+                <div class="section-header">
+                    <h2><i class="fas fa-search"></i> Lost Pets</h2>
+                    <div class="section-controls">
+                        <input type="text" id="lost-search" placeholder="Search lost pets..." class="search-input">
+                        <button onclick="openModal('lostInfoModal')" class="info-btn" title="Lost Pets Information">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <button class="delete-all-btn" onclick="confirmDeleteAll('lost')">
+                            <i class="fas fa-trash-alt"></i> Delete All
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-controls">
+                    <div class="filter-group">
+                        <label for="lost-type-filter">Filter by Type:</label>
+                        <select id="lost-type-filter" onchange="applyLostFilters()">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="lost-sort">Sort by:</label>
+                        <select id="lost-sort" onchange="applyLostFilters()">
+                            <option value="date-desc">Date (Newest First)</option>
+                            <option value="date-asc">Date (Oldest First)</option>
+                            <option value="name">Name</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pet-list-container">
+                    <div id="lost-list" class="pet-list"></div>
+                    <div id="lost-empty-state" class="empty-state" style="display: none;">
+                        <i class="fas fa-search empty-icon"></i>
+                        <p>No lost pets found</p>
+                        <button class="cta-btn" onclick="openReportModal()">Report a Lost Pet</button>
+                    </div>
+                </div>
+            </section>
+
+            <section id="found" class="tab" style="display: none;">
+                <div class="section-header">
+                    <h2><i class="fas fa-check-circle"></i> Found Pets</h2>
+                    <div class="section-controls">
+                        <input type="text" id="found-search" placeholder="Search found pets..." class="search-input">
+                        <button onclick="openModal('foundInfoModal')" class="info-btn" title="Found Pets Information">
+                            <i class="fas fa-info-circle"></i>
+                        </button>
+                        <button class="delete-all-btn" onclick="confirmDeleteAll('found')">
+                            <i class="fas fa-trash-alt"></i> Delete All
+                        </button>
+                    </div>
+                </div>
+                <div class="filter-controls">
+                    <div class="filter-group">
+                        <label for="found-type-filter">Filter by Type:</label>
+                        <select id="found-type-filter" onchange="applyFoundFilters()">
+                            <option value="">All Types</option>
+                        </select>
+                    </div>
+                    <div class="filter-group">
+                        <label for="found-sort">Sort by:</label>
+                        <select id="found-sort" onchange="applyFoundFilters()">
+                            <option value="date-desc">Date (Newest First)</option>
+                            <option value="date-asc">Date (Oldest First)</option>
+                            <option value="name">Name</option>
+                        </select>
+                    </div>
+                </div>
+                <div class="pet-list-container">
+                    <div id="found-list" class="pet-list"></div>
+                    <div id="found-empty-state" class="empty-state" style="display: none;">
+                        <i class="fas fa-check-circle empty-icon"></i>
+                        <p>No found pets reported</p>
+                        <button class="cta-btn" onclick="openReportModal()">Report a Found Pet</button>
+                    </div>
+                </div>
+            </section>
+        </main>
+        
+        <footer>
+            <p>&copy; 2025 StrayScan - Helping reunite pets with their owners</p>
+        </footer>
+    </div>
+
+    <div id="reportModal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('reportModal')">&times;</span>
+            <h3><i class="fas fa-plus-circle"></i> Report a Pet</h3>
+            <form id="reportForm">
+                <div class="form-group">
+                    <label for="pet_name">Pet Name (optional)</label>
+                    <input type="text" id="pet_name" name="pet_name" placeholder="Pet's name (if known)">
+                </div>
+                <div class="form-group">
+                    <label for="pet_type">Pet Type</label>
+                    <input type="text" id="pet_type" name="pet_type" placeholder="Dog, Cat, Bird, etc." required>
+                </div>
+                <div class="form-group">
+                    <label for="description">Description</label>
+                    <textarea id="description" name="description" placeholder="Color, breed, size, distinctive features..." required></textarea>
+                </div>
+                <div class="form-group">
+                    <label for="status">Status</label>
+                    <select id="status" name="status" required>
+                        <option value="lost">Lost</option>
+                        <option value="found">Found</option>
+                    </select>
+                </div>
+                <div class="form-group">
+                    <label for="location">Location</label>
+                    <input type="text" id="location" name="location" placeholder="Where the pet was lost/found" required>
+                </div>
+                <div class="form-group">
+                    <label for="date">Date</label>
+                    <input type="date" id="date" name="date" required>
+                </div>
+                <div class="form-group">
+                    <label for="contact_info">Contact Information</label>
+                    <input type="text" id="contact_info" name="contact_info" placeholder="Phone number or email" required>
+                </div>
+                <div class="form-actions">
+                    <button type="submit" class="submit-btn">Submit Report</button>
+                    <button type="button" class="cancel-btn" onclick="closeModal('reportModal')">Cancel</button>
+                </div>
+            </form>
+            <div id="formMessage" class="form-message"></div>
+        </div>
+    </div>
+
+    <div id="petModal" class="modal hidden">
+        <div class="modal-content">
+            <span class="close-btn" onclick="closeModal('petModal')">&times;</span>
+            <div class="pet-modal-header">
+                <h3 id="modalTitle">Pet Details</h3>
+                <span id="modalStatusBadge" class="status-badge"></span>
+            </div>
+            <div class="pet-details">
+                <div class="detail-group">
+                    <i class="fas fa-paw detail-icon"></i>
+                    <div>
+                        <h4>Type</h4>
+                        <p id="modalType"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-align-left detail-icon"></i>
+                    <div>
+                        <h4>Description</h4>
+                        <p id="modalDescription"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-map-marker-alt detail-icon"></i>
+                    <div>
+                        <h4>Location</h4>
+                        <p id="modalLocation"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-calendar-alt detail-icon"></i>
+                    <div>
+                        <h4>Date</h4>
+                        <p id="modalDate"></p>
+                    </div>
+                </div>
+                <div class="detail-group">
+                    <i class="fas fa-address-card detail-icon"></i>
+                    <div>
+                        <h4>Contact</h4>
+                        <p id="modalContact"></p>
+                    </div>
+                </div>
+            </div>
+            <div id="modalActions" class="modal-actions"></div>
+        </div>
+    </div>
+
+    <div id="confirmModal" class="modal hidden">
+        <div class="modal-content confirmation-modal">
+            <h3><i class="fas fa-exclamation-triangle"></i> Confirmation</h3>
+            <p id="confirmMessage"></p>
+            <div class="confirm-actions">
+                <button id="confirmYes" class="danger-btn">Yes, Delete</button>
+                <button id="confirmNo" class="cancel-btn" onclick="closeModal('confirmModal')">Cancel</button>
+            </div>
+        </div>
+    </div>
+
+    <div id="dashboardInfoModal" class="modal hidden">
+        <div class="modal-content info-modal">
+            <span class="close-btn" onclick="closeModal('dashboardInfoModal')">&times;</span>
+            <h3><i class="fas fa-info-circle"></i> Dashboard Information</h3>
+            <div class="info-content">
+                <p>The Dashboard provides an overview of all reported lost and found pets. Here you can see:</p>
+                <ul>
+                    <li>Total counts of lost and found pets</li>
+                    <li>Recent activity summary</li>
+                    <li>List of recently reported pets</li>
+                    <li>Charts showing the distribution of pet types</li>
+                </ul>
+                <p>Use the navigation buttons to view detailed lists or report a new pet.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="lostInfoModal" class="modal hidden">
+        <div class="modal-content info-modal">
+            <span class="close-btn" onclick="closeModal('lostInfoModal')">&times;</span>
+            <h3><i class="fas fa-info-circle"></i> Lost Pets Information</h3>
+            <div class="info-content">
+                <p>This section shows all reported lost pets. You can:</p>
+                <ul>
+                    <li>Search for specific pets using the search bar</li>
+                    <li>Filter pets by type</li>
+                    <li>Sort the list by date or name</li>
+                    <li>Click on a pet card to see more details</li>
+                    <li>Mark a pet as found when it's been reunited with its owner</li>
+                </ul>
+                <p>If you've lost your pet, you can report it by clicking the "Report Pet" button.</p>
+            </div>
+        </div>
+    </div>
+
+    <div id="editModal" class="modal hidden">
+        <div class="modal-content">
+          <div class="modal-header">
+            <h2>Edit Pet</h2>
+            <span class="close-modal" onclick="closeModal('editModal')">&times;</span>
+          </div>
+          
+          <form id="editForm">
+            <input type="hidden" id="edit-pet-id" name="id">
+            
+            <div class="form-group">
+              <label for="edit-status">Status</label>
+              <select id="edit-status" name="status" required>
+                <option value="lost">Lost</option>
+                <option value="found">Found</option>
+              </select>
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-pet-name">Pet Name (if known)</label>
+              <input type="text" id="edit-pet-name" name="pet_name" placeholder="Pet's name if known">
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-pet-type">Pet Type</label>
+              <input type="text" id="edit-pet-type" name="pet_type" required placeholder="e.g. Dog, Cat, Bird">
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-date">Date</label>
+              <input type="date" id="edit-date" name="date" required>
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-location">Location</label>
+              <input type="text" id="edit-location" name="location" required placeholder="Area where pet was lost/found">
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-description">Description</label>
+              <textarea id="edit-description" name="description" required rows="4" 
+                        placeholder="Color, breed, size, distinguishing features, etc."></textarea>
+            </div>
+            
+            <div class="form-group">
+              <label for="edit-contact-info">Contact Information</label>
+              <input type="text" id="edit-contact-info" name="contact_info" required placeholder="Phone number or email">
+            </div>
+            
+            <div id="editFormMessage" class="form-message"></div>
+            
+            <div class="form-actions">
+              <button type="button" class="cancel-btn" onclick="closeModal('editModal')">Cancel</button>
+              <button type="submit" class="submit-btn">Update Pet</button>
+            </div>
+          </form>
+        </div>
+      </div>
+
+    <div id="foundInfoModal" class="modal hidden">
+        <div class="modal-content info-modal">
+            <span class="close-btn" onclick="closeModal('foundInfoModal')">&times;</span>
+            <h3><i class="fas fa-info-circle"></i> Found Pets Information</h3>
+            <div class="info-content">
+                <p>This section shows all reported found pets. You can:</p>
+                <ul>
+                    <li>Search for specific pets using the search bar</li>
+                    <li>Filter pets by type</li>
+                    <li>Sort the list by date or name</li>
+                    <li>Click on a pet card to see more details</li>
+                </ul>
+                <p>If you've found a stray pet, you can report it by clicking the "Report Pet" button.</p>
+            </div>
+        </div>
+    </div>
+
+    <script src="{% static 'js/app.js' %}"></script>
+</body>
+</html>

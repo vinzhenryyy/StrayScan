@@ -1,0 +1,1179 @@
+
+let lostPets = [];
+let foundPets = [];
+let allPetTypes = new Set();
+
+function getCsrfToken() {
+  const name = 'csrftoken';
+  let cookieValue = null;
+  if (document.cookie && document.cookie !== '') {
+      const cookies = document.cookie.split(';');
+      for (let i = 0; i < cookies.length; i++) {
+          const cookie = cookies[i].trim();
+          if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+          }
+      }
+  }
+  return cookieValue;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date').value = today;
+  
+  
+  switchTab('dashboard');
+  
+  
+  document.getElementById('reportForm').addEventListener('submit', handleReportFormSubmit);
+  document.getElementById('editForm').addEventListener('submit', handleEditFormSubmit);  
+  document.getElementById('lost-search').addEventListener('input', applyLostFilters);
+  document.getElementById('found-search').addEventListener('input', applyFoundFilters);
+});
+
+
+function switchTab(tabName) {
+  
+  document.querySelectorAll('.tab').forEach(tab => tab.style.display = 'none');
+  document.getElementById(tabName).style.display = 'block';
+  
+  
+  document.querySelectorAll('nav button').forEach(btn => btn.classList.remove('active'));
+  document.querySelector(`button[onclick="switchTab('${tabName}')"]`).classList.add('active');
+  
+  
+  if (tabName === 'dashboard') {
+    loadDashboard();
+  } else if (tabName === 'lost') {
+    loadLostPets();
+  } else if (tabName === 'found') {
+    loadFoundPets();
+  }
+}
+
+
+function openModal(modalId) {
+  document.getElementById(modalId).classList.remove('hidden');
+}
+
+function closeModal(modalId) {
+  document.getElementById(modalId).classList.add('hidden');
+}
+
+function openReportModal() {
+  
+  document.getElementById('reportForm').reset();
+  
+  
+  const today = new Date().toISOString().split('T')[0];
+  document.getElementById('date').value = today;
+  
+  
+  document.getElementById('formMessage').textContent = '';
+  document.getElementById('formMessage').className = 'form-message';
+  
+  
+  openModal('reportModal');
+}
+
+
+async function handleReportFormSubmit(e) {
+  e.preventDefault();
+  
+  
+  const form = e.target;
+  const data = Object.fromEntries(new FormData(form).entries());
+  const messageElement = document.getElementById('formMessage');
+  
+  try {
+    
+    const res = await fetch('/api/report/', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data)
+    });
+    
+    const result = await res.json();
+    
+    
+    if (res.ok) {
+      messageElement.textContent = 'Pet reported successfully!';
+      messageElement.className = 'form-message success';
+      
+      
+      setTimeout(() => {
+        form.reset();
+        closeModal('reportModal');
+        refreshAllData();
+      }, 1500);
+    } else {
+      messageElement.textContent = result.error || 'Failed to report pet.';
+      messageElement.className = 'form-message error';
+    }
+  } catch (err) {
+    messageElement.textContent = 'An error occurred. Please try again.';
+    messageElement.className = 'form-message error';
+    console.error('Form submission error:', err);
+  }
+}
+
+
+async function loadDashboard() {
+  try {
+    
+    const [lostRes, foundRes] = await Promise.all([
+      fetch('/api/lost/'),
+      fetch('/api/found/')
+    ]);
+    
+    const lostData = await lostRes.json();
+    const foundData = await foundRes.json();
+    
+    
+    lostPets = lostData.lost_pets || [];
+    foundPets = foundData.found_pets || [];
+    
+    
+    updateDashboardStats();
+    
+    
+    const recentLostPets = [...lostPets].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+    const recentFoundPets = [...foundPets].sort((a, b) => new Date(b.date) - new Date(a.date)).slice(0, 5);
+    
+    renderPetCards('dashboard-lost', recentLostPets, false);
+    renderPetCards('dashboard-found', recentFoundPets, false);
+    
+    
+    renderCharts();
+    
+    
+    updatePetTypeFilters();
+    
+  } catch (err) {
+    console.error('Error loading dashboard data:', err);
+    showErrorMessage('dashboard', 'Failed to load dashboard data. Please refresh the page.');
+  }
+}
+
+async function loadLostPets() {
+  try {
+    const res = await fetch('/api/lost/');
+    const data = await res.json();
+    
+    lostPets = data.lost_pets || [];
+    
+    
+    if (lostPets.length === 0) {
+      document.getElementById('lost-list').innerHTML = '';
+      document.getElementById('lost-empty-state').style.display = 'flex';
+    } else {
+      document.getElementById('lost-empty-state').style.display = 'none';
+      renderPetCards('lost-list', lostPets, true);
+    }
+    
+    
+    updatePetTypeFilters();
+    
+  } catch (err) {
+    console.error('Error loading lost pets:', err);
+    showErrorMessage('lost-list', 'Failed to load lost pets. Please refresh the page.');
+  }
+}
+
+async function loadFoundPets() {
+  try {
+    const res = await fetch('/api/found/');
+    const data = await res.json();
+    
+    foundPets = data.found_pets || [];
+    
+    
+    if (foundPets.length === 0) {
+      document.getElementById('found-list').innerHTML = '';
+      document.getElementById('found-empty-state').style.display = 'flex';
+    } else {
+      document.getElementById('found-empty-state').style.display = 'none';
+      renderPetCards('found-list', foundPets, true);
+    }
+    
+    
+    updatePetTypeFilters();
+    
+  } catch (err) {
+    console.error('Error loading found pets:', err);
+    showErrorMessage('found-list', 'Failed to load found pets. Please refresh the page.');
+  }
+}
+
+function handleEditFormSubmit(e) {
+  e.preventDefault();
+
+  const form = e.target;
+  const formData = new FormData(form);
+  const petId = formData.get('id');
+
+  const data = {};
+  formData.forEach((value, key) => {
+      data[key] = value;
+  });
+
+  const messageElement = document.getElementById('editFormMessage');
+
+  fetch(`/api/pet/${petId}/edit/`, {  
+    method: 'PUT',
+    headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+    },
+    body: JSON.stringify(data)
+})
+  .then(res => {
+      if (!res.ok) {
+          return res.json().then(err => {
+              throw new Error(err.error || 'Failed to update pet.');
+          });
+      }
+      return res.json();
+  })
+  .then(result => {
+      messageElement.textContent = 'Pet updated successfully!';
+      messageElement.className = 'form-message success';
+
+      setTimeout(() => {
+          closeModal('editModal');
+          refreshAllData();
+      }, 1500);
+  })
+  .catch(err => {
+      messageElement.textContent = err.message || 'An error occurred. Please try again.';
+      messageElement.className = 'form-message error';
+      console.error('Form submission error:', err);
+  });
+}
+
+
+function renderPetCards(containerId, pets, showActions = false) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = '';
+  
+  if (pets.length === 0) {
+    container.innerHTML = '<p class="no-pets-message">No pets to display.</p>';
+    return;
+  }
+  
+  pets.forEach(pet => {
+    
+    const dateObj = new Date(pet.date);
+    const formattedDate = dateObj.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+    
+    
+    const card = document.createElement('div');
+    card.className = `pet-card ${pet.status}-pet`;
+    card.onclick = () => openPetDetailsModal(pet);
+    
+    
+    card.innerHTML = `
+      <span class="status-badge ${pet.status}">${pet.status}</span>
+      <h3 class="pet-name">${pet.pet_name || 'Unnamed Pet'}</h3>
+      <p class="pet-type">${pet.pet_type}</p>
+      
+      <div class="pet-info">
+        <div class="pet-info-item">
+          <i class="fas fa-map-marker-alt pet-info-icon"></i>
+          <span>${pet.location}</span>
+        </div>
+        <div class="pet-info-item">
+          <i class="fas fa-calendar-alt pet-info-icon"></i>
+          <span>${formattedDate}</span>
+        </div>
+      </div>
+      
+      <p class="pet-description">${pet.description}</p>
+    `;
+    
+    
+    if (showActions) {
+      const actions = document.createElement('div');
+      actions.className = 'card-actions';
+      actions.innerHTML = `
+        <button class="card-btn edit-btn" onclick="event.stopPropagation(); editPet(${pet.id})">
+          <i class="fas fa-edit"></i> Edit
+        </button>
+        <button class="card-btn delete-btn" onclick="event.stopPropagation(); deletePet(${pet.id})">
+          <i class="fas fa-trash-alt"></i> Delete
+        </button>
+        ${pet.status === 'lost' ? `
+          <button class="card-btn mark-found-btn" onclick="event.stopPropagation(); markAsFound(${pet.id})">
+            <i class="fas fa-check"></i> Mark Found
+          </button>
+        ` : ''}
+      `;
+      card.appendChild(actions);
+    }
+    
+    container.appendChild(card);
+  });
+}
+
+
+function openPetDetailsModal(pet) {
+  
+  const dateObj = new Date(pet.date);
+  const formattedDate = dateObj.toLocaleDateString('en-US', { 
+    year: 'numeric', 
+    month: 'long', 
+    day: 'numeric' 
+  });
+  
+  
+  document.getElementById('modalTitle').textContent = pet.pet_name || 'Unnamed Pet';
+  document.getElementById('modalType').textContent = pet.pet_type;
+  document.getElementById('modalDescription').textContent = pet.description;
+  
+  
+  const statusBadge = document.getElementById('modalStatusBadge');
+  statusBadge.textContent = pet.status.charAt(0).toUpperCase() + pet.status.slice(1);
+  statusBadge.className = `status-badge ${pet.status}`;
+  
+  document.getElementById('modalLocation').textContent = pet.location;
+  document.getElementById('modalDate').textContent = formattedDate;
+  document.getElementById('modalContact').textContent = pet.contact_info;
+  
+  
+  const actionsContainer = document.getElementById('modalActions');
+  actionsContainer.innerHTML = `
+    <button class="edit-btn card-btn" onclick="editPet(${pet.id})">
+      <i class="fas fa-edit"></i> Edit
+    </button>
+    <button class="delete-btn card-btn" onclick="deletePet(${pet.id})">
+      <i class="fas fa-trash-alt"></i> Delete
+    </button>
+    ${pet.status === 'lost' ? `
+      <button class="mark-found-btn card-btn" onclick="markAsFound(${pet.id})">
+        <i class="fas fa-check"></i> Mark as Found
+      </button>
+    ` : ''}
+  `;
+  
+  
+  openModal('petModal');
+}
+
+
+async function deletePet(id) {
+  
+  closeModal('petModal');
+  
+  
+  document.getElementById('confirmMessage').textContent = 'Are you sure you want to delete this pet record? This action cannot be undone.';
+  
+  
+  document.getElementById('confirmYes').onclick = async () => {
+    try {
+      
+      function getCsrfToken() {
+        const name = 'csrftoken';
+        let cookieValue = null;
+        if (document.cookie && document.cookie !== '') {
+          const cookies = document.cookie.split(';');
+          for (let i = 0; i < cookies.length; i++) {
+            const cookie = cookies[i].trim();
+            if (cookie.substring(0, name.length + 1) === (name + '=')) {
+              cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+              break;
+            }
+          }
+        }
+        return cookieValue;
+      }
+      
+      const res = await fetch(`/api/pet/${id}/delete/`, {  
+        method: 'DELETE',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRFToken': getCsrfToken()
+        }
+    });
+      
+      if (res.ok) {
+        closeModal('confirmModal');
+        refreshAllData();
+        showTemporaryMessage('Pet record deleted successfully.');
+      } else {
+        const data = await res.json();
+        showTemporaryMessage(data.error || 'Failed to delete pet record.', 'error');
+      }
+    } catch (err) {
+      console.error('Error deleting pet:', err);
+      showTemporaryMessage('An error occurred while deleting the pet record.', 'error');
+    }
+  };
+  
+  openModal('confirmModal');
+}
+function confirmDeleteAll(status) {
+  closeModal('petModal'); // Optional: close any open pet modal if needed
+
+  document.getElementById('confirmMessage').textContent =
+    `Are you sure you want to delete all ${status} pet records? This action cannot be undone.`;
+
+  document.getElementById('confirmYes').onclick = async () => {
+    try {
+      const res = await fetch(`/api/${status}/delete_all/`, {
+        method: 'DELETE',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-CSRFToken': getCsrfToken()
+        }
+      });
+
+      if (res.ok) {
+        const data = await res.json();
+        closeModal('confirmModal');
+        refreshAllData();
+        showTemporaryMessage(data.message || `Successfully deleted all ${status} pets.`, 'success');
+      } else {
+        const errorData = await res.json();
+        showTemporaryMessage(errorData.error || `Failed to delete all ${status} pets.`, 'error');
+      }
+    } catch (error) {
+      console.error('Error deleting all pets:', error);
+      showTemporaryMessage('A network error occurred while deleting pets.', 'error');
+    }
+  };
+
+  openModal('confirmModal');
+}
+
+async function deleteAllPets(status) {
+  try {
+      const res = await fetch(`/api/${status}/delete_all/`, {  
+        method: 'DELETE',
+          headers: {
+              'Content-Type': 'application/json',
+              'X-CSRFToken': getCsrfToken()
+          }
+      });
+
+      if (res.ok) {
+          const data = await res.json(); 
+          console.log('Successfully deleted all', status, 'pets:', data); 
+          showTemporaryMessage(data.message || `Successfully deleted all ${status} pets.`, 'success');
+          refreshAllData(); 
+      } else {
+          let errorMessage = `Failed to delete all ${status} pets.`;
+          try {
+              const errorData = await res.json(); 
+              errorMessage = errorData.error || errorMessage;
+          } catch (jsonError) {
+              console.error('Error parsing error response:', jsonError);
+              
+          }
+          console.error('Error deleting all', status, 'pets:', errorMessage);
+          showTemporaryMessage(errorMessage, 'error');
+      }
+
+  } catch (error) {
+      console.error('Network error deleting all', status, 'pets:', error);
+      showTemporaryMessage('A network error occurred while deleting pets.', 'error');
+  }
+}
+
+async function markAsFound(id) {
+  closeModal('petModal');
+  
+  try {
+    const res = await fetch(`/api/pet/${id}/mark_found/`, { 
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'X-CSRFToken': getCsrfToken()
+      }
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok) {
+      refreshAllData();
+      showTemporaryMessage('Pet marked as found successfully!');
+    } else {
+      showTemporaryMessage(data.error || 'Failed to mark pet as found.', 'error');
+    }
+  } catch (err) {
+    console.error('Error marking pet as found:', err);
+    showTemporaryMessage('An error occurred. Please try again.', 'error');
+  }
+}
+
+
+function editPet(id) {
+  
+  closeModal('petModal');
+  
+  
+  let pet;
+  let isLost = false;
+  
+  for (const lostPet of lostPets) {
+    if (lostPet.id === id) {
+      pet = lostPet;
+      isLost = true;
+      break;
+    }
+  }
+  
+  if (!pet) {
+    for (const foundPet of foundPets) {
+      if (foundPet.id === id) {
+        pet = foundPet;
+        break;
+      }
+    }
+  }
+  
+  if (!pet) {
+    showTemporaryMessage('Pet not found. Please refresh the page.', 'error');
+    return;
+  }
+  
+  
+  const form = document.getElementById('editForm');
+  
+  
+  document.getElementById('edit-pet-id').value = pet.id;
+  
+  
+  const statusField = document.getElementById('edit-status');
+  statusField.value = pet.status;
+  statusField.disabled = pet.status === 'found';
+  
+  
+  document.getElementById('edit-pet-name').value = pet.pet_name || '';
+  document.getElementById('edit-pet-type').value = pet.pet_type;
+  document.getElementById('edit-date').value = pet.date ? new Date(pet.date).toISOString().split('T')[0] : '';
+  document.getElementById('edit-location').value = pet.location;
+  document.getElementById('edit-description').value = pet.description;
+  document.getElementById('edit-contact-info').value = pet.contact_info;
+  
+  
+  openModal('editModal');
+}
+
+function renderCharts() {
+  
+  if (window.lostPetsChart) window.lostPetsChart.destroy();
+  if (window.foundPetsChart) window.foundPetsChart.destroy();
+  
+  
+  const lostTypes = countPetTypes(lostPets);
+  const foundTypes = countPetTypes(foundPets);
+  
+  
+  const lostColorsArray = ['#ff9800', '#ff7043', '#ff5722', '#f4511e', '#e64a19', '#d84315'];
+  const foundColorsArray = ['#4caf50', '#66bb6a', '#81c784', '#a5d6a7', '#c8e6c9', '#e8f5e9'];
+  
+  
+  const lostColors = generateColors(Object.keys(lostTypes).length, lostColorsArray);
+  const foundColors = generateColors(Object.keys(foundTypes).length, foundColorsArray);
+  
+  
+  window.lostPetsChart = new Chart(document.getElementById('lostChart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(lostTypes),
+      datasets: [{
+        data: Object.values(lostTypes),
+        backgroundColor: lostColors,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 20,
+            boxWidth: 12
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const label = context.label || '';
+              const value = context.raw || 0;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = Math.round((value / total) * 100);
+              return `${label}: ${value} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+  
+  window.foundPetsChart = new Chart(document.getElementById('foundChart'), {
+    type: 'doughnut',
+    data: {
+      labels: Object.keys(foundTypes),
+      datasets: [{
+        data: Object.values(foundTypes),
+        backgroundColor: foundColors,
+        borderWidth: 1
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: true,
+      plugins: {
+        legend: {
+          position: 'bottom',
+          labels: {
+            padding: 20,
+            boxWidth: 12
+          }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const label = context.label || '';
+              const value = context.raw || 0;
+              const total = context.dataset.data.reduce((a, b) => a + b, 0);
+              const percentage = Math.round((value / total) * 100);
+              return `${label}: ${value} (${percentage}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+
+function updateDashboardStats() {
+  
+  document.querySelector('#total-lost .stat-count').textContent = lostPets.length;
+  
+  
+  document.querySelector('#total-found .stat-count').textContent = foundPets.length;
+  
+  
+  const sevenDaysAgo = new Date();
+  sevenDaysAgo.setDate(sevenDaysAgo.getDate() - 7);
+  
+  const recentLost = lostPets.filter(pet => new Date(pet.date) >= sevenDaysAgo).length;
+  const recentFound = foundPets.filter(pet => new Date(pet.date) >= sevenDaysAgo).length;
+  
+  document.querySelector('#recent-activity .stat-count').textContent = recentLost + recentFound;
+}
+
+
+function applyLostFilters() {
+  const searchTerm = document.getElementById('lost-search').value.toLowerCase();
+  const typeFilter = document.getElementById('lost-type-filter').value;
+  const sortOption = document.getElementById('lost-sort').value;
+  
+  
+  let filteredPets = lostPets.filter(pet => {
+    
+    const matchesSearch = 
+      (pet.pet_name && pet.pet_name.toLowerCase().includes(searchTerm)) ||
+      pet.pet_type.toLowerCase().includes(searchTerm) ||
+      pet.description.toLowerCase().includes(searchTerm) ||
+      pet.location.toLowerCase().includes(searchTerm);
+    
+    
+    const matchesType = typeFilter === '' || pet.pet_type === typeFilter;
+    
+    return matchesSearch && matchesType;
+  });
+  
+  
+  filteredPets.sort((a, b) => {
+    switch (sortOption) {
+      case 'date-desc':
+        return new Date(b.date) - new Date(a.date);
+      case 'date-asc':
+        return new Date(a.date) - new Date(b.date);
+      case 'name':
+        const nameA = a.pet_name || 'Unnamed';
+        const nameB = b.pet_name || 'Unnamed';
+        return nameA.localeCompare(nameB);
+      default:
+        return 0;
+    }
+  });
+  
+  
+  if (filteredPets.length === 0) {
+    document.getElementById('lost-list').innerHTML = '<p class="no-results">No matching pets found.</p>';
+  } else {
+    renderPetCards('lost-list', filteredPets, true);
+  }
+}
+
+
+function applyFoundFilters() {
+  const searchTerm = document.getElementById('found-search').value.toLowerCase();
+  const typeFilter = document.getElementById('found-type-filter').value;
+  const sortOption = document.getElementById('found-sort').value;
+  
+  
+  let filteredPets = foundPets.filter(pet => {
+    
+    const matchesSearch = 
+      (pet.pet_name && pet.pet_name.toLowerCase().includes(searchTerm)) ||
+      pet.pet_type.toLowerCase().includes(searchTerm) ||
+      pet.description.toLowerCase().includes(searchTerm) ||
+      pet.location.toLowerCase().includes(searchTerm);
+    
+    
+    const matchesType = typeFilter === '' || pet.pet_type === typeFilter;
+    
+    return matchesSearch && matchesType;
+  });
+  
+  
+  filteredPets.sort((a, b) => {
+    switch (sortOption) {
+      case 'date-desc':
+        return new Date(b.date) - new Date(a.date);
+      case 'date-asc':
+        return new Date(a.date) - new Date(b.date);
+      case 'name':
+        const nameA = a.pet_name || 'Unnamed';
+        const nameB = b.pet_name || 'Unnamed';
+        return nameA.localeCompare(nameB);
+        default:
+          return 0;
+        }
+      });
+          
+  if (filteredPets.length === 0) {
+    document.getElementById('found-list').innerHTML = '<p class="no-results">No matching pets found.</p>';
+  } else {
+    renderPetCards('found-list', filteredPets, true);
+  }
+}
+
+
+function updatePetTypeFilters() {
+  
+  allPetTypes.clear();
+  
+  lostPets.forEach(pet => allPetTypes.add(pet.pet_type));
+  foundPets.forEach(pet => allPetTypes.add(pet.pet_type));
+  
+  const petTypes = Array.from(allPetTypes).sort();
+  
+  
+  const lostFilter = document.getElementById('lost-type-filter');
+  updateFilterOptions(lostFilter, petTypes);
+  
+  
+  const foundFilter = document.getElementById('found-type-filter');
+  updateFilterOptions(foundFilter, petTypes);
+}
+
+
+function updateFilterOptions(selectElement, options) {
+  
+  const currentValue = selectElement.value;
+  
+  
+  while (selectElement.options.length > 1) {
+    selectElement.remove(1);
+  }
+  
+  
+  options.forEach(option => {
+    const optElement = document.createElement('option');
+    optElement.value = option;
+    optElement.textContent = option;
+    selectElement.appendChild(optElement);
+  });
+  
+  
+  if (options.includes(currentValue)) {
+    selectElement.value = currentValue;
+  } else {
+    selectElement.selectedIndex = 0; 
+  }
+}
+
+
+function countPetTypes(pets) {
+  const counts = {};
+  
+  pets.forEach(pet => {
+    const type = pet.pet_type;
+    counts[type] = (counts[type] || 0) + 1;
+  });
+  
+  return counts;
+}
+
+
+function generateColors(count, colorPalette) {
+  const colors = [];
+  
+  for (let i = 0; i < count; i++) {
+    const index = i % colorPalette.length;
+    colors.push(colorPalette[index]);
+  }
+  
+  return colors;
+}
+
+
+function showTemporaryMessage(message, type = 'success') {
+  const messageElement = document.getElementById('app-message');
+  messageElement.textContent = message;
+  messageElement.className = `app-message ${type}`;
+  messageElement.style.display = 'block';
+  
+  
+  setTimeout(() => {
+    messageElement.style.display = 'none';
+  }, 3000);
+}
+
+
+function showErrorMessage(containerId, message) {
+  const container = document.getElementById(containerId);
+  container.innerHTML = `<div class="error-message"><i class="fas fa-exclamation-circle"></i> ${message}</div>`;
+}
+
+
+function refreshAllData() {
+  const activeTab = document.querySelector('nav button.active');
+  if (activeTab) {
+    
+    const tabName = activeTab.getAttribute('onclick').match(/'([^']+)'/)[1];
+    switchTab(tabName);
+  } else {
+    
+    switchTab('dashboard');
+  }
+}
+
+
+function searchPotentialMatches(pet) {
+  const isLost = pet.status === 'lost';
+  const searchAgainst = isLost ? foundPets : lostPets;
+  
+  
+  const petDate = new Date(pet.date);
+  const lowerDate = new Date(petDate);
+  lowerDate.setDate(lowerDate.getDate() - 7);
+  const upperDate = new Date(petDate);
+  upperDate.setDate(upperDate.getDate() + 7);
+  
+  
+  const matches = searchAgainst.filter(otherPet => {
+    
+    if (pet.pet_type !== otherPet.pet_type) return false;
+    
+    
+    const otherDate = new Date(otherPet.date);
+    if (otherDate < lowerDate || otherDate > upperDate) return false;
+    
+    
+    if (!pet.location.toLowerCase().includes(otherPet.location.toLowerCase()) && 
+        !otherPet.location.toLowerCase().includes(pet.location.toLowerCase())) {
+      return false;
+    }
+    
+    
+    return true;
+  });
+  
+  return matches;
+}
+
+
+function showPotentialMatches(pet) {
+  const matches = searchPotentialMatches(pet);
+  
+  
+  const matchesContainer = document.getElementById('potentialMatches');
+  matchesContainer.innerHTML = '';
+  
+  if (matches.length === 0) {
+    matchesContainer.innerHTML = '<p>No potential matches found at this time.</p>';
+    return;
+  }
+  
+  
+  matches.forEach(match => {
+    const matchItem = document.createElement('div');
+    matchItem.className = 'match-item';
+    
+    
+    const dateObj = new Date(match.date);
+    const formattedDate = dateObj.toLocaleDateString('en-US', { 
+      year: 'numeric', 
+      month: 'short', 
+      day: 'numeric' 
+    });
+    
+    matchItem.innerHTML = `
+      <h4>${match.pet_name || 'Unnamed Pet'} (${match.pet_type})</h4>
+      <p class="match-location"><i class="fas fa-map-marker-alt"></i> ${match.location}</p>
+      <p class="match-date"><i class="fas fa-calendar-alt"></i> ${formattedDate}</p>
+      <p class="match-description">${match.description}</p>
+      <button class="view-details-btn" onclick="openPetDetailsModal(${JSON.stringify(match).replace(/"/g, '&quot;')})">
+        View Details
+      </button>
+    `;
+    
+    matchesContainer.appendChild(matchItem);
+  });
+  
+  
+  openModal('matchesModal');
+}
+
+
+function exportToCSV(data, filename) {
+  
+  let csvContent = '';
+  
+  
+  const keys = new Set();
+  data.forEach(item => {
+    Object.keys(item).forEach(key => keys.add(key));
+  });
+  
+  
+  csvContent += Array.from(keys).join(',') + '\n';
+  
+  
+  data.forEach(item => {
+    const row = Array.from(keys).map(key => {
+      
+      const value = item[key] !== undefined ? item[key] : '';
+      return typeof value === 'string' ? 
+        '"' + value.replace(/"/g, '""') + '"' : 
+        value;
+    });
+    csvContent += row.join(',') + '\n';
+  });
+  
+  
+  const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+  const url = URL.createObjectURL(blob);
+  const link = document.createElement('a');
+  link.setAttribute('href', url);
+  link.setAttribute('download', filename);
+  link.style.visibility = 'hidden';
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+}
+
+
+function exportLostPets() {
+  exportToCSV(lostPets, 'lost_pets.csv');
+}
+
+function exportFoundPets() {
+  exportToCSV(foundPets, 'found_pets.csv');
+}
+
+
+function printPetList(status) {
+  const pets = status === 'lost' ? lostPets : foundPets;
+
+  
+  const printWindow = window.open('', '_blank');
+
+  
+  let content = `
+    <!DOCTYPE html>
+    <html>
+    <head>
+      <title>Pet Finder - ${status.charAt(0).toUpperCase() + status.slice(1)} Pets</title>
+      <style>
+        body { font-family: Arial, sans-serif; margin: 20px; }
+        h1 { color: #333; margin-bottom: 20px; }
+        .print-date { color: #666; margin-bottom: 30px; }
+        table { width: 100%; border-collapse: collapse; }
+        th, td { border: 1px solid #ddd; padding: 8px; text-align: left; }
+        th { background-color: #f2f2f2; }
+        tr:nth-child(even) { background-color: #f9f9f9; }
+      </style>
+    </head>
+    <body>
+      <h1>Pet Finder - ${status.charAt(0).toUpperCase() + status.slice(1)} Pets</h1>
+      <p class="print-date">Generated on: ${new Date().toLocaleDateString()}</p>
+
+      <table>
+        <thead>
+          <tr>
+            <th>Name</th>
+            <th>Type</th>
+            <th>Location</th>
+            <th>Date</th>
+            <th>Description</th>
+            <th>Contact</th>
+          </tr>
+        </thead>
+        <tbody>
+  `;
+
+  
+  pets.forEach(pet => {
+    const petDate = pet.date ? new Date(pet.date).toLocaleDateString() : 'Unknown';
+    content += `
+          <tr>
+            <td>${pet.pet_name || 'Unnamed'}</td>
+            <td>${pet.pet_type}</td>
+            <td>${pet.location}</td>
+            <td>${petDate}</td>
+            <td>${pet.description}</td>
+            <td>${pet.contact_info}</td>
+          </tr>
+    `;
+  });
+
+  
+  content += `
+        </tbody>
+      </table>
+    </body>
+    </html>
+  `;
+
+  
+  printWindow.document.open();
+  printWindow.document.write(content);
+  printWindow.document.close();
+
+  
+  printWindow.onload = function() {
+    printWindow.print();
+  };
+}
+
+
+function initMaps() {
+  
+  const mapsContainer = document.getElementById('maps-container');
+  if (!mapsContainer) return;
+  
+  
+  mapsContainer.innerHTML = '';
+  
+  
+  const lostMapElement = document.createElement('div');
+  lostMapElement.id = 'lost-map';
+  lostMapElement.className = 'map';
+  
+  const foundMapElement = document.createElement('div');
+  foundMapElement.id = 'found-map';
+  foundMapElement.className = 'map';
+  
+  
+  mapsContainer.appendChild(lostMapElement);
+  mapsContainer.appendChild(foundMapElement);
+  
+  
+  if (window.google && window.google.maps) {
+    initializeMapWithMarkers('lost-map', lostPets);
+    initializeMapWithMarkers('found-map', foundPets);
+  } else {
+    
+    lostMapElement.innerHTML = '<p class="map-fallback">Map feature requires Google Maps API</p>';
+    foundMapElement.innerHTML = '<p class="map-fallback">Map feature requires Google Maps API</p>';
+  }
+}
+
+
+function initializeMapWithMarkers(mapElementId, pets) {
+  
+  
+  
+  const mapElement = document.getElementById(mapElementId);
+  mapElement.innerHTML = '<p class="map-fallback">Map visualization coming soon</p>';
+}
+
+
+function openHelpTutorial() {
+  openModal('helpModal');
+}
+
+
+let appSettings = {
+  darkMode: false,
+  notificationsEnabled: true,
+  autoRefreshInterval: 5 
+};
+
+
+function loadSettings() {
+  const savedSettings = localStorage.getItem('petFinderSettings');
+  if (savedSettings) {
+    appSettings = JSON.parse(savedSettings);
+    applySettings();
+  }
+}
+
+
+function saveSettings() {
+  localStorage.setItem('petFinderSettings', JSON.stringify(appSettings));
+  showTemporaryMessage('Settings saved successfully');
+}
+
+
+function applySettings() {
+  
+  document.body.classList.toggle('dark-mode', appSettings.darkMode);
+  
+  
+  if (appSettings.autoRefreshInterval > 0) {
+    
+    if (window.autoRefreshTimer) {
+      clearInterval(window.autoRefreshTimer);
+    }
+    
+    
+    const intervalMs = appSettings.autoRefreshInterval * 60 * 1000;
+    window.autoRefreshTimer = setInterval(refreshAllData, intervalMs);
+  }
+}
+
+
+function toggleDarkMode() {
+  appSettings.darkMode = !appSettings.darkMode;
+  applySettings();
+  saveSettings();
+}
+
+
+document.addEventListener('DOMContentLoaded', function() {
+  
+  loadSettings();
+  refreshAllData();
+  
+  
+  
+
+});
+
+document.addEventListener('DOMContentLoaded', function() {
+  
+  const editForm = document.getElementById('editForm');
+  if (editForm) {
+    editForm.addEventListener('submit', handleEditFormSubmit);
+  }
+});
+
